@@ -1116,15 +1116,28 @@
                     <p class="input-hint">
                         <kbd>Enter</kbd> send · <kbd>Shift+Enter</kbd> newline
                     </p>
-                    <div
-                        class="agent-toggle"
-                        id="agent-toggle"
-                        onclick="toggleAgent()"
-                    >
-                        <div class="toggle-track" id="toggle-track">
-                            <div class="toggle-thumb"></div>
+                    <div style="display: flex; align-items: center; gap: 12px">
+                        <div
+                            class="agent-toggle"
+                            id="always-allow-toggle"
+                            onclick="toggleAlwaysAllow()"
+                            style="display: none"
+                        >
+                            <div class="toggle-track" id="always-allow-track">
+                                <div class="toggle-thumb"></div>
+                            </div>
+                            <span class="agent-label">always allow</span>
                         </div>
-                        <span class="agent-label">agent mode</span>
+                        <div
+                            class="agent-toggle"
+                            id="agent-toggle"
+                            onclick="toggleAgent()"
+                        >
+                            <div class="toggle-track" id="toggle-track">
+                                <div class="toggle-thumb"></div>
+                            </div>
+                            <span class="agent-label">agent mode</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1148,6 +1161,7 @@
             let currentConvId = null;
             let conversations = [];
             let agentMode = false;
+            let alwaysAllow = false;
             let abortController = null;
 
             // ── Init ────────────────────────────────────────────────────
@@ -1193,6 +1207,33 @@
                 inputEl.placeholder = agentMode
                     ? "Ask me to do something with the codebase..."
                     : "Message...";
+
+                // Show/hide always-allow toggle alongside agent mode
+                const alwaysAllowEl = document.getElementById(
+                    "always-allow-toggle",
+                );
+                alwaysAllowEl.style.display = agentMode ? "flex" : "none";
+
+                // Reset always-allow when agent mode is turned off
+                if (!agentMode && alwaysAllow) {
+                    alwaysAllow = false;
+                    document
+                        .getElementById("always-allow-toggle")
+                        .classList.remove("on");
+                    document
+                        .getElementById("always-allow-track")
+                        .classList.remove("on");
+                }
+            }
+
+            function toggleAlwaysAllow() {
+                alwaysAllow = !alwaysAllow;
+                document
+                    .getElementById("always-allow-toggle")
+                    .classList.toggle("on", alwaysAllow);
+                document
+                    .getElementById("always-allow-track")
+                    .classList.toggle("on", alwaysAllow);
             }
 
             // ── Tool call parsing ────────────────────────────────────────
