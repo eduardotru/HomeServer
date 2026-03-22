@@ -19,11 +19,20 @@
 include .env
 export
 
-CHAT_APP_PORT  ?= 8001
+CHAT_APP_PORT  ?= 5000
 LLM_SERVER_PORT ?= 8000
 POSTGRES_PORT  ?= 5432
 
-.PHONY: start stop restart restart-chat restart-llm restart-code dev logs build build-code llm chat db db-reset db-backup db-restore code status stop-chat stop-llm stop-code
+.PHONY: start stop restart restart-chat restart-llm restart-code dev logs build build-code llm chat db db-reset db-backup db-restore code status stop-chat stop-llm stop-code setup
+
+# --- Setup -------------------------------------------------------------------
+
+setup:
+	@echo "▶ Setting up LLM server venv..."
+	@python3 -m venv $(CURDIR)/llm/.venv
+	@$(CURDIR)/llm/.venv/bin/pip install --quiet --upgrade pip
+	@$(CURDIR)/llm/.venv/bin/pip install --quiet -r $(CURDIR)/llm/requirements.txt
+	@echo "  LLM server venv ready."
 
 # --- Start everything --------------------------------------------------------
 
