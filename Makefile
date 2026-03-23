@@ -33,6 +33,8 @@ setup:
 	@$(CURDIR)/llm/.venv/bin/pip install --quiet --upgrade pip
 	@$(CURDIR)/llm/.venv/bin/pip install --quiet -r $(CURDIR)/llm/requirements.txt
 	@echo "  LLM server venv ready."
+	@echo "▶ Starting container system..."
+	@container system start
 
 # --- Start everything --------------------------------------------------------
 
