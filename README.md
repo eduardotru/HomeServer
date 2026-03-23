@@ -15,7 +15,7 @@ HomeServer/
 ├── .env          — All ports and config
 ├── Makefile      — Platform management
 └── data/
-    └── backups/  — Automatic DB snapshots
+    └── postgres/  — DB Volume
 ```
 
 ### Services
@@ -36,8 +36,7 @@ The LLM server runs natively to get direct Metal GPU access. Everything else run
 - Apple Silicon Mac (M1/M2/M3/M4)
 - macOS 26 (Tahoe) or later
 - Python 3.11+
-- [Apple container CLI](https://developer.apple.com/documentation/virtualization) (`brew install --cask container`)
-- Homebrew
+- [Apple container CLI](https://developer.apple.com/documentation/virtualization)
 
 ---
 
@@ -48,7 +47,6 @@ The LLM server runs natively to get direct Metal GPU access. Everything else run
 ```bash
 git clone <your-repo> HomeServer
 cd HomeServer
-cp .env.example .env   # edit ports/model if needed
 ```
 
 ### 2. Install dependencies
