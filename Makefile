@@ -23,7 +23,7 @@ CHAT_APP_PORT  ?= 5000
 LLM_SERVER_PORT ?= 8000
 POSTGRES_PORT  ?= 5432
 
-.PHONY: start stop restart restart-chat restart-llm restart-code restart-search dev logs build build-code build-search llm chat db db-reset db-backup db-restore code searxng search status stop-chat stop-llm stop-code stop-search setup
+.PHONY: start stop restart restart-chat restart-llm restart-code restart-search dev logs build build-code build-search llm chat db db-reset code searxng search status stop-chat stop-llm stop-code stop-search setup
 
 # --- Setup -------------------------------------------------------------------
 
@@ -73,7 +73,6 @@ llm:
 
 db:
 	@echo "▶ Starting Postgres on port $(POSTGRES_PORT)..."
-	@mkdir -p logs data/backups
 	@container run --rm -d \
 		--name postgres \
 		-p $(POSTGRES_PORT):5432 \
@@ -81,6 +80,7 @@ db:
 		-e POSTGRES_USER=$(POSTGRES_USER) \
 		-e POSTGRES_PASSWORD=$(POSTGRES_PASSWORD) \
 		-v $(CURDIR)/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql \
+		-v $(CURDIR)/data/postgres:/var/lib/postgresql \
 		postgres:16-alpine > logs/postgres.cid
 	@echo "  Postgres container ID: $$(cat logs/postgres.cid)"
 	@container logs -f postgres > logs/postgres.log 2>&1 &
@@ -90,45 +90,12 @@ db:
 		sleep 1; \
 	done
 	@echo "  Postgres ready."
-	@$(MAKE) db-restore || true
 
 db-reset:
 	@echo "⚠ Stopping Postgres and wiping all data and backups..."
 	@container stop postgres 2>/dev/null || true
-	@rm -rf $(CURDIR)/data
+	@rm -rf $(CURDIR)/data/postgres
 	@echo "  Done. Run 'make db' to start fresh."
-
-db-backup:
-	@mkdir -p data/backups
-	@if container inspect postgres > /dev/null 2>&1; then \
-		echo "▶ Backing up database to data/backups/..."; \
-		BACKUP_FILE=data/backups/backup-$$(date +%Y%m%d-%H%M%S).sql; \
-		container exec postgres pg_dump -U $(POSTGRES_USER) $(POSTGRES_DB) > $$BACKUP_FILE; \
-		if [ -s $$BACKUP_FILE ]; then \
-			echo "  Backup saved: $$BACKUP_FILE ($$(wc -l < $$BACKUP_FILE) lines)"; \
-		else \
-			echo "  ⚠ Backup file is empty — something went wrong"; \
-			rm -f $$BACKUP_FILE; \
-		fi; \
-	else \
-		if ls data/backups/*.sql 2>/dev/null | head -1 | grep -q sql; then \
-			echo "  Postgres not running — keeping existing backup $$(ls -t data/backups/*.sql | head -1)"; \
-		else \
-			echo "  ⚠ Postgres not running and no existing backup found."; \
-			echo "     Run 'make db && make db-backup' to create one."; \
-		fi; \
-	fi
-
-db-restore:
-	@latest=$$(ls -t data/backups/*.sql 2>/dev/null | head -1); \
-	if [ -z "$$latest" ]; then echo "  No backups found, skipping."; exit 0; fi; \
-	echo "▶ Restoring from $$latest..."; \
-	container cp $$latest postgres:/tmp/restore.sql && \
-	container exec postgres psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -f /tmp/restore.sql > /dev/null 2>&1 && \
-	echo "  Restored from $$latest" || \
-	echo "  Restore failed — DB may already have data, continuing."
-
-
 
 build:
 	@mkdir -p logs
@@ -220,7 +187,7 @@ stop-search:
 
 # --- Stop everything ---------------------------------------------------------
 
-stop: stop-llm stop-chat stop-code stop-search db-backup
+stop: stop-llm stop-chat stop-code stop-search
 	@container stop postgres 2>/dev/null && echo "  Postgres stopped." || echo "  Postgres already stopped."
 
 stop-llm:
