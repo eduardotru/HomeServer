@@ -1,0 +1,47 @@
+use_default_settings: true
+
+general:
+  instance_name: "HomeServer Search"
+  debug: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "en"
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "homeserver-local-only"
+  bind_address: "0.0.0.0"
+  port: 8080
+  base_url: false
+  image_proxy: false
+
+ui:
+  static_use_hash: true
+  default_theme: simple
+  center_alignment: true
+
+# Disable all engines except the ones we want
+engines:
+  - name: google
+    engine: google
+    use_mobile_ui: false
+    disabled: false
+
+  - name: duckduckgo
+    engine: duckduckgo
+    disabled: false
+
+  - name: brave
+    engine: brave
+    disabled: false
+
+outgoing:
+  request_timeout: 8.0
+  max_request_timeout: 15.0
+  useragent_suffix: ""
+  pool_connections: 100
+  pool_maxsize: 20

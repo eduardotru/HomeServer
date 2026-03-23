@@ -1,0 +1,653 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Local AI · Search</title>
+        <link
+            href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&display=swap"
+            rel="stylesheet"
+        />
+        <link
+            rel="stylesheet"
+            href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css"
+        />
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js"></script>
+        <style>
+            *,
+            *::before,
+            *::after {
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+            }
+
+            :root {
+                --bg: #f5f0e8;
+                --bg2: #ede5d8;
+                --surface: #faf6f0;
+                --border3: #d4c8b4;
+                --border2: #8c7a5a;
+                --text: #2c1f0e;
+                --text2: #5a3e28;
+                --text3: #9a8060;
+                --accent: #2260c0;
+                --accent-lt: #e0ecff;
+                --accent2: #1a4a9a;
+                --red: #b03020;
+                --mono: "Geist Mono", monospace;
+            }
+
+            html,
+            body {
+                min-height: 100%;
+                background: var(--bg);
+                color: var(--text);
+                font-family: var(--mono);
+                font-size: 14px;
+                line-height: 1.6;
+                -webkit-font-smoothing: antialiased;
+            }
+
+            /* ── Header ─────────────────────────────────────────────── */
+            header {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                padding: 0 24px;
+                height: 52px;
+                background: var(--surface);
+                border-bottom: 1px solid var(--border3);
+                position: sticky;
+                top: 0;
+                z-index: 10;
+            }
+
+            .header-brand {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                text-decoration: none;
+            }
+
+            .brand-dot {
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                background: var(--accent);
+                box-shadow: 0 0 0 2px var(--accent-lt);
+                flex-shrink: 0;
+                transition: all 0.3s;
+            }
+
+            .brand-dot.searching {
+                background: #d4820a;
+                box-shadow: 0 0 0 2px #fef3dc;
+                animation: thinking-ring 1s ease-in-out infinite;
+            }
+
+            @keyframes thinking-ring {
+                0%,
+                100% {
+                    box-shadow: 0 0 0 2px #fef3dc;
+                }
+                50% {
+                    box-shadow: 0 0 0 4px #fde9b0;
+                }
+            }
+
+            .brand-name {
+                font-size: 12px;
+                font-weight: 500;
+                color: var(--text2);
+                letter-spacing: 0.06em;
+            }
+
+            nav {
+                display: flex;
+                align-items: center;
+                gap: 2px;
+                margin-left: 8px;
+            }
+
+            .nav-link {
+                font-size: 11px;
+                color: var(--text3);
+                text-decoration: none;
+                padding: 4px 10px;
+                border-radius: 5px;
+                letter-spacing: 0.04em;
+                transition:
+                    background 0.15s,
+                    color 0.15s;
+            }
+
+            .nav-link:hover {
+                background: var(--bg2);
+                color: var(--text);
+            }
+            .nav-link.active {
+                background: var(--accent-lt);
+                color: var(--accent);
+            }
+
+            .header-status {
+                margin-left: auto;
+                font-size: 11px;
+                color: var(--text3);
+                letter-spacing: 0.04em;
+            }
+
+            /* ── Main layout ─────────────────────────────────────────── */
+            main {
+                max-width: 860px;
+                margin: 0 auto;
+                padding: 40px 24px 60px;
+            }
+
+            /* ── Search box ─────────────────────────────────────────── */
+            .search-wrap {
+                margin-bottom: 32px;
+            }
+
+            .search-label {
+                font-size: 11px;
+                color: var(--text3);
+                letter-spacing: 0.06em;
+                margin-bottom: 10px;
+                display: block;
+            }
+
+            .search-row {
+                display: flex;
+                gap: 10px;
+                align-items: flex-end;
+            }
+
+            .search-box {
+                flex: 1;
+                display: flex;
+                align-items: center;
+                background: var(--surface);
+                border: 1px solid var(--border3);
+                border-radius: 10px;
+                padding: 10px 16px;
+                transition:
+                    border-color 0.2s,
+                    box-shadow 0.2s;
+                gap: 10px;
+            }
+
+            .search-box:focus-within {
+                border-color: var(--accent);
+                box-shadow: 0 0 0 3px rgba(34, 96, 192, 0.08);
+            }
+
+            .search-icon {
+                color: var(--text3);
+                font-size: 14px;
+                flex-shrink: 0;
+            }
+
+            #search-input {
+                flex: 1;
+                background: transparent;
+                border: none;
+                outline: none;
+                color: var(--text);
+                font-family: var(--mono);
+                font-size: 14px;
+                line-height: 1.5;
+            }
+
+            #search-input::placeholder {
+                color: var(--text3);
+            }
+
+            #search-btn {
+                width: 38px;
+                height: 38px;
+                border-radius: 8px;
+                background: var(--accent);
+                border: none;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                flex-shrink: 0;
+                transition:
+                    background 0.15s,
+                    transform 0.1s,
+                    opacity 0.15s;
+            }
+
+            #search-btn:hover:not(:disabled) {
+                background: var(--accent2);
+                transform: scale(1.05);
+            }
+            #search-btn:active:not(:disabled) {
+                transform: scale(0.95);
+            }
+            #search-btn:disabled {
+                opacity: 0.35;
+                cursor: not-allowed;
+            }
+            #search-btn svg {
+                width: 16px;
+                height: 16px;
+            }
+
+            /* ── Results layout ─────────────────────────────────────── */
+            .results-grid {
+                display: grid;
+                grid-template-columns: 1fr 340px;
+                gap: 24px;
+                align-items: start;
+            }
+
+            @media (max-width: 700px) {
+                .results-grid {
+                    grid-template-columns: 1fr;
+                }
+            }
+
+            /* ── AI Answer ──────────────────────────────────────────── */
+            .answer-card {
+                background: var(--surface);
+                border: 1px solid var(--border3);
+                border-radius: 12px;
+                overflow: hidden;
+            }
+
+            .answer-header {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 12px 16px;
+                border-bottom: 1px solid var(--border3);
+                background: var(--bg2);
+            }
+
+            .answer-header-dot {
+                width: 6px;
+                height: 6px;
+                border-radius: 50%;
+                background: var(--accent);
+                flex-shrink: 0;
+            }
+
+            .answer-header span {
+                font-size: 11px;
+                color: var(--text2);
+                letter-spacing: 0.06em;
+            }
+
+            .answer-body {
+                padding: 16px;
+                font-size: 13px;
+                line-height: 1.75;
+                color: var(--text);
+                min-height: 60px;
+            }
+
+            .answer-body.empty {
+                color: var(--text3);
+                font-style: italic;
+            }
+
+            /* Markdown inside answer */
+            .answer-body p {
+                margin: 0 0 10px;
+            }
+            .answer-body p:last-child {
+                margin: 0;
+            }
+            .answer-body h1,
+            .answer-body h2,
+            .answer-body h3 {
+                font-weight: 500;
+                margin: 14px 0 6px;
+            }
+            .answer-body ul,
+            .answer-body ol {
+                padding-left: 20px;
+                margin: 6px 0 10px;
+            }
+            .answer-body li {
+                margin-bottom: 4px;
+            }
+            .answer-body code {
+                font-family: var(--mono);
+                font-size: 11px;
+                background: var(--bg2);
+                border: 1px solid var(--border3);
+                padding: 1px 5px;
+                border-radius: 4px;
+                color: var(--accent2);
+            }
+            .answer-body pre {
+                margin: 10px 0;
+                border: 1px solid var(--border3);
+                border-radius: 8px;
+                overflow: hidden;
+            }
+            .answer-body pre code {
+                display: block;
+                padding: 12px 14px;
+                background: var(--surface);
+                font-size: 11px;
+                color: var(--text);
+                overflow-x: auto;
+                border: none;
+                border-radius: 0;
+            }
+            .answer-body strong {
+                font-weight: 500;
+            }
+            .answer-body a {
+                color: var(--accent);
+                text-decoration: underline;
+            }
+
+            .cursor {
+                display: inline-block;
+                width: 2px;
+                height: 14px;
+                background: var(--accent);
+                margin-left: 2px;
+                vertical-align: middle;
+                border-radius: 1px;
+                animation: cur-blink 0.8s ease-in-out infinite;
+            }
+
+            @keyframes cur-blink {
+                0%,
+                100% {
+                    opacity: 1;
+                }
+                50% {
+                    opacity: 0;
+                }
+            }
+
+            /* ── Sources sidebar ────────────────────────────────────── */
+            .sources-card {
+                background: var(--surface);
+                border: 1px solid var(--border3);
+                border-radius: 12px;
+                overflow: hidden;
+            }
+
+            .sources-header {
+                padding: 10px 14px;
+                border-bottom: 1px solid var(--border3);
+                font-size: 10px;
+                color: var(--text3);
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                background: var(--bg2);
+            }
+
+            .source-item {
+                display: flex;
+                flex-direction: column;
+                gap: 3px;
+                padding: 10px 14px;
+                border-bottom: 1px solid var(--bg2);
+                text-decoration: none;
+                transition: background 0.1s;
+            }
+
+            .source-item:last-child {
+                border-bottom: none;
+            }
+            .source-item:hover {
+                background: var(--bg2);
+            }
+
+            .source-num {
+                font-size: 9px;
+                color: var(--accent);
+                letter-spacing: 0.06em;
+            }
+
+            .source-title {
+                font-size: 12px;
+                color: var(--text);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .source-url {
+                font-size: 10px;
+                color: var(--text3);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .sources-empty {
+                padding: 16px 14px;
+                font-size: 11px;
+                color: var(--text3);
+                text-align: center;
+            }
+        </style>
+    </head>
+    <body>
+        <header>
+            <a class="header-brand" href="/">
+                <div class="brand-dot" id="brand-dot"></div>
+                <span class="brand-name">local ai</span>
+            </a>
+            <nav>
+                <a class="nav-link" href="/">chat</a>
+                <a class="nav-link active" href="/search">search</a>
+            </nav>
+            <span class="header-status" id="status-text"></span>
+        </header>
+
+        <main>
+            <div class="search-wrap">
+                <label class="search-label" for="search-input"
+                    >search the web, get an AI answer</label
+                >
+                <div class="search-row">
+                    <div class="search-box">
+                        <span class="search-icon">⌕</span>
+                        <input
+                            id="search-input"
+                            type="text"
+                            placeholder="Ask anything..."
+                            autocomplete="off"
+                            autofocus
+                        />
+                    </div>
+                    <button id="search-btn" onclick="doSearch()" title="Search">
+                        <svg viewBox="0 0 16 16" fill="none">
+                            <circle
+                                cx="6.5"
+                                cy="6.5"
+                                r="4"
+                                stroke="white"
+                                stroke-width="1.5"
+                            />
+                            <path
+                                d="M10 10L13.5 13.5"
+                                stroke="white"
+                                stroke-width="1.5"
+                                stroke-linecap="round"
+                            />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <div class="results-grid" id="results-grid" style="display: none">
+                <div class="answer-card">
+                    <div class="answer-header">
+                        <div class="answer-header-dot"></div>
+                        <span id="answer-label">AI ANSWER</span>
+                    </div>
+                    <div class="answer-body empty" id="answer-body">
+                        Search to get an answer…
+                    </div>
+                </div>
+
+                <div class="sources-card">
+                    <div class="sources-header">Sources</div>
+                    <div id="sources-list">
+                        <div class="sources-empty">No sources yet</div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <script>
+            const input = document.getElementById("search-input");
+            const searchBtn = document.getElementById("search-btn");
+            const brandDot = document.getElementById("brand-dot");
+            const statusEl = document.getElementById("status-text");
+            const grid = document.getElementById("results-grid");
+            const answerEl = document.getElementById("answer-body");
+            const sourcesEl = document.getElementById("sources-list");
+            const labelEl = document.getElementById("answer-label");
+
+            marked.setOptions({ breaks: true, gfm: true });
+
+            input.addEventListener("keydown", (e) => {
+                if (e.key === "Enter") doSearch();
+            });
+
+            function setSearching(active) {
+                searchBtn.disabled = active;
+                brandDot.className = "brand-dot" + (active ? " searching" : "");
+                statusEl.textContent = active ? "searching…" : "";
+            }
+
+            function renderSources(results) {
+                if (!results.length) {
+                    sourcesEl.innerHTML =
+                        '<div class="sources-empty">No sources found</div>';
+                    return;
+                }
+                sourcesEl.innerHTML = results
+                    .map(
+                        (r, i) => `
+      <a class="source-item" href="${escHtml(r.url)}" target="_blank" rel="noopener">
+        <span class="source-num">[${i + 1}]</span>
+        <span class="source-title">${escHtml(r.title || r.url)}</span>
+        <span class="source-url">${escHtml(hostname(r.url))}</span>
+      </a>
+    `,
+                    )
+                    .join("");
+            }
+
+            async function doSearch() {
+                const query = input.value.trim();
+                if (!query || searchBtn.disabled) return;
+
+                setSearching(true);
+                grid.style.display = "grid";
+                answerEl.className = "answer-body empty";
+                answerEl.textContent = "Searching…";
+                sourcesEl.innerHTML =
+                    '<div class="sources-empty">Fetching results…</div>';
+                labelEl.textContent = "AI ANSWER";
+
+                try {
+                    const res = await fetch("/search-chat", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ query, stream: true }),
+                    });
+
+                    if (!res.ok) throw new Error(`Error ${res.status}`);
+
+                    // Parse search results from response header
+                    const rawResults = res.headers.get("X-Search-Results");
+                    if (rawResults) {
+                        try {
+                            renderSources(JSON.parse(rawResults));
+                        } catch {}
+                    }
+
+                    // Stream the answer
+                    const reader = res.body.getReader();
+                    const decoder = new TextDecoder();
+                    let text = "";
+
+                    answerEl.className = "answer-body";
+                    answerEl.innerHTML = "";
+
+                    const cursor = document.createElement("span");
+                    cursor.className = "cursor";
+                    answerEl.appendChild(cursor);
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        text += decoder.decode(value, { stream: true });
+
+                        // Strip think blocks during streaming
+                        const thinkEnd = text.indexOf("</think>");
+                        const displayText =
+                            thinkEnd !== -1
+                                ? text
+                                      .slice(thinkEnd + "</think>".length)
+                                      .trimStart()
+                                : text.startsWith("<think>")
+                                  ? ""
+                                  : text;
+
+                        answerEl.textContent = displayText;
+                        answerEl.appendChild(cursor);
+                    }
+
+                    cursor.remove();
+
+                    // Final markdown render — strip think block first
+                    const thinkEnd = text.indexOf("</think>");
+                    const finalText =
+                        thinkEnd !== -1
+                            ? text
+                                  .slice(thinkEnd + "</think>".length)
+                                  .trimStart()
+                            : text.startsWith("<think>")
+                              ? text
+                              : text;
+
+                    answerEl.innerHTML = marked.parse(finalText);
+                    answerEl
+                        .querySelectorAll("pre code")
+                        .forEach((el) => hljs.highlightElement(el));
+                    labelEl.textContent = "AI ANSWER";
+                } catch (err) {
+                    answerEl.textContent = `Error: ${err.message}`;
+                    answerEl.style.color = "var(--red)";
+                }
+
+                setSearching(false);
+                input.focus();
+            }
+
+            function escHtml(s) {
+                return (s || "")
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;");
+            }
+
+            function hostname(url) {
+                try {
+                    return new URL(url).hostname;
+                } catch {
+                    return url;
+                }
+            }
+        </script>
+    </body>
+</html>

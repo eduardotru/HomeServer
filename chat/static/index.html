@@ -1009,6 +1009,51 @@
                     <div class="brand-dot" id="brand-dot"></div>
                     <span class="brand-name">local ai</span>
                 </div>
+                <nav
+                    style="
+                        display: flex;
+                        align-items: center;
+                        gap: 2px;
+                        margin-left: 8px;
+                    "
+                >
+                    <a
+                        href="/"
+                        style="
+                            font-size: 11px;
+                            color: var(--accent);
+                            background: var(--accent-lt);
+                            text-decoration: none;
+                            padding: 4px 10px;
+                            border-radius: 5px;
+                            letter-spacing: 0.04em;
+                        "
+                        >chat</a
+                    >
+                    <a
+                        href="/search"
+                        style="
+                            font-size: 11px;
+                            color: var(--text3);
+                            text-decoration: none;
+                            padding: 4px 10px;
+                            border-radius: 5px;
+                            letter-spacing: 0.04em;
+                            transition:
+                                background 0.15s,
+                                color 0.15s;
+                        "
+                        onmouseover="
+                            this.style.background = 'var(--bg2)';
+                            this.style.color = 'var(--text)';
+                        "
+                        onmouseout="
+                            this.style.background = '';
+                            this.style.color = 'var(--text3)';
+                        "
+                        >search</a
+                    >
+                </nav>
 
                 <div class="conv-area">
                     <button id="conv-btn" onclick="toggleDropdown()">
@@ -1353,14 +1398,14 @@
       <div class="tool-card-header">
         <span class="tool-icon">${icons[toolCall.tool] || "🔧"}</span>
         <span class="tool-card-name">${escHtml(toolCall.tool)}</span>
-        <span class="tool-card-badge ${isDestructive ? "destructive" : "safe"}">
-          ${isDestructive ? "confirm required" : "auto"}
+        <span class="tool-card-badge ${isDestructive && !alwaysAllow ? "destructive" : "safe"}">
+          ${isDestructive && !alwaysAllow ? "confirm required" : "auto"}
         </span>
       </div>
       ${toolCall.reason ? `<div class="tool-card-reason">${escHtml(toolCall.reason)}</div>` : ""}
       <div class="tool-card-code">${escHtml(preview)}</div>
       ${
-          isDestructive
+          isDestructive && !alwaysAllow
               ? `
       <div class="tool-card-actions">
         <button class="tool-btn tool-btn-confirm" onclick="confirmTool(this)">Run</button>
@@ -1533,7 +1578,8 @@
                 messagesEl.appendChild(wrapper);
                 scrollToBottom();
 
-                if (!toolCall.destructive) {
+                // Auto-execute if: tool is non-destructive, OR always-allow is on
+                if (!toolCall.destructive || alwaysAllow) {
                     executeToolCall(toolCall).then((result) => {
                         showToolResult(
                             wrapper.querySelector(".tool-card"),

@@ -27,6 +27,25 @@ SAFE_READ_ONLY_COMMANDS = {
     "tree",
 }
 
+# Directories the LLM is allowed to read and write.
+# Anything not in this list is readable only by list/read, not writable.
+WRITE_ALLOWLIST = {
+    "chat",
+    "llm",
+    "code",
+    "postgres",
+    "search",
+    "searxng",
+}
+
+# Paths the LLM can never read or write, even though they're in /workspace.
+READ_DENYLIST = {
+    ".env",
+    "data",
+    "logs",
+    ".git",
+}
+
 
 def is_safe_path(path: str) -> bool:
     """Ensure the path stays inside /workspace."""
@@ -35,6 +54,18 @@ def is_safe_path(path: str) -> bool:
         return resolved.is_relative_to(WORKSPACE)
     except Exception:
         return False
+
+
+def is_denied(path: str) -> bool:
+    """Block access to sensitive paths regardless of operation."""
+    clean = path.lstrip("/").split("/")[0]  # top-level component
+    return clean in READ_DENYLIST
+
+
+def is_write_allowed(path: str) -> bool:
+    """Only allow writes inside explicitly allowlisted directories."""
+    clean = path.lstrip("/").split("/")[0]
+    return clean in WRITE_ALLOWLIST
 
 
 def is_readonly_command(cmd: str) -> bool:
@@ -75,6 +106,8 @@ def health():
 def list_directory(req: ListRequest):
     if not is_safe_path(req.path):
         raise HTTPException(400, "Path outside workspace")
+    if is_denied(req.path):
+        raise HTTPException(403, f"Access denied: {req.path}")
     target = (WORKSPACE / req.path.lstrip("/")).resolve()
     if not target.exists():
         raise HTTPException(404, f"Path not found: {req.path}")
@@ -83,13 +116,15 @@ def list_directory(req: ListRequest):
 
     entries = []
     for entry in sorted(target.iterdir()):
-        entries.append(
-            {
-                "name": entry.name,
-                "type": "dir" if entry.is_dir() else "file",
-                "size": entry.stat().st_size if entry.is_file() else None,
-            }
-        )
+        # Filter out denied entries from listings too
+        if not is_denied(str(entry.relative_to(WORKSPACE))):
+            entries.append(
+                {
+                    "name": entry.name,
+                    "type": "dir" if entry.is_dir() else "file",
+                    "size": entry.stat().st_size if entry.is_file() else None,
+                }
+            )
     return {"path": req.path, "entries": entries}
 
 
@@ -97,6 +132,8 @@ def list_directory(req: ListRequest):
 def read_file(req: ReadRequest):
     if not is_safe_path(req.path):
         raise HTTPException(400, "Path outside workspace")
+    if is_denied(req.path):
+        raise HTTPException(403, f"Access denied: {req.path}")
     target = (WORKSPACE / req.path.lstrip("/")).resolve()
     if not target.exists():
         raise HTTPException(404, f"File not found: {req.path}")
@@ -113,6 +150,12 @@ def read_file(req: ReadRequest):
 def write_file(req: WriteRequest):
     if not is_safe_path(req.path):
         raise HTTPException(400, "Path outside workspace")
+    if is_denied(req.path):
+        raise HTTPException(403, f"Access denied: {req.path}")
+    if not is_write_allowed(req.path):
+        raise HTTPException(
+            403, f"Write not allowed outside of: {', '.join(sorted(WRITE_ALLOWLIST))}"
+        )
     target = (WORKSPACE / req.path.lstrip("/")).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     try:

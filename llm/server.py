@@ -11,6 +11,8 @@ from pydantic import BaseModel
 
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
+MAX_TOKENS = int(os.getenv("MAX_TOKENS", 8192))
+
 # --- Model loading -----------------------------------------------------------
 
 model = None
@@ -83,7 +85,7 @@ class StreamJob:
         def generate():
             try:
                 for token in stream_generate(
-                    model, tokenizer, prompt=self.prompt, max_tokens=1024
+                    model, tokenizer, prompt=self.prompt, max_tokens=MAX_TOKENS
                 ):
                     self._loop.call_soon_threadsafe(
                         self._token_queue.put_nowait, token.text
@@ -118,7 +120,7 @@ class CompleteJob:
             lambda: "".join(
                 token.text
                 for token in stream_generate(
-                    model, tokenizer, prompt=self.prompt, max_tokens=1024
+                    model, tokenizer, prompt=self.prompt, max_tokens=MAX_TOKENS
                 )
             ),
         )

@@ -21,7 +21,8 @@ CHAT_APP_PORT = int(os.getenv("CHAT_APP_PORT", 5000))
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://localai:localai@localhost:5432/localai"
 )
-CODE_CONTAINER_URL = os.getenv("CODE_CONTAINER_URL", "http://localhost:6000")
+CODE_CONTAINER_URL = os.getenv("CODE_CONTAINER_URL", "http://localhost:8002")
+SEARCH_APP_URL = os.getenv("SEARCH_APP_URL", "http://localhost:8003")
 
 # Compaction thresholds.
 # Rough estimate: 1 token ≈ 4 chars. Qwen2.5-7B has a 32k context window.
@@ -262,6 +263,78 @@ async def run_tool(req: dict):
 @app.get("/")
 async def index():
     return FileResponse("static/index.html")
+
+
+@app.get("/search")
+async def search_page():
+    return FileResponse("static/search.html")
+
+
+class SearchChatRequest(BaseModel):
+    query: str
+    stream: bool = True
+
+
+@app.post("/search-chat")
+async def search_chat(req: SearchChatRequest):
+    """
+    Search the web for the query, inject results as context,
+    then stream an LLM response grounded in the search results.
+    """
+    # 1. Fetch search results
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            res = await client.post(
+                f"{SEARCH_APP_URL}/search",
+                json={"query": req.query, "num_results": 5},
+            )
+            res.raise_for_status()
+            search_data = res.json()
+    except Exception as e:
+        raise HTTPException(502, f"Search failed: {e}")
+
+    results = search_data.get("results", [])
+
+    # 2. Format results as context for the LLM
+    if results:
+        context = "\n\n".join(
+            f"[{i + 1}] {r['title']}\nURL: {r['url']}\n{r['snippet']}"
+            for i, r in enumerate(results)
+            if r.get("snippet")
+        )
+        prompt = (
+            f"Using the following search results, answer this query: {req.query}\n\n"
+            f"Search results:\n{context}\n\n"
+            f"Provide a clear, well-structured answer based on the search results. "
+            f"Cite sources by number where relevant."
+        )
+    else:
+        prompt = (
+            f"No search results were found for: {req.query}\n"
+            f"Answer based on your training knowledge and note that no web results were available."
+        )
+
+    # 3. Stream LLM response
+    messages = [{"role": "user", "content": prompt}]
+
+    async def stream():
+        async with httpx.AsyncClient(timeout=120) as client:
+            async with client.stream(
+                "POST",
+                f"{LLM_SERVER_URL}/generate",
+                json={"messages": messages, "stream": True},
+            ) as llm_res:
+                async for chunk in llm_res.aiter_text():
+                    yield chunk
+
+    # Also return the search results as a header for the UI to display
+    return StreamingResponse(
+        stream(),
+        media_type="text/plain",
+        headers={
+            "X-Search-Results": __import__("json").dumps(results),
+        },
+    )
 
 
 @app.get("/conversations")

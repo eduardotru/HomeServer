@@ -23,7 +23,7 @@ CHAT_APP_PORT  ?= 5000
 LLM_SERVER_PORT ?= 8000
 POSTGRES_PORT  ?= 5432
 
-.PHONY: start stop restart restart-chat restart-llm restart-code dev logs build build-code llm chat db db-reset db-backup db-restore code status stop-chat stop-llm stop-code setup
+.PHONY: start stop restart restart-chat restart-llm restart-code restart-search dev logs build build-code build-search llm chat db db-reset db-backup db-restore code searxng search status stop-chat stop-llm stop-code stop-search setup
 
 # --- Setup -------------------------------------------------------------------
 
@@ -36,12 +36,13 @@ setup:
 
 # --- Start everything --------------------------------------------------------
 
-start: build build-code db llm chat code logs
+start: build build-code db llm chat code searxng search logs
 
 restart:      stop start
 restart-chat: stop-chat build chat
 restart-llm:  stop-llm llm
 restart-code: stop-code build-code code
+restart-search: stop-search build-search search
 
 # --- Dev mode (LLM server with --reload) -------------------------------------
 # Safe because lifespan loads the model after uvicorn forks.
@@ -136,6 +137,7 @@ chat:
 		-e CHAT_APP_PORT=$(CHAT_APP_PORT) \
 		-e DATABASE_URL=$(DATABASE_URL) \
 		-e CODE_CONTAINER_URL=$(CODE_CONTAINER_URL) \
+		-e SEARCH_APP_URL=$(SEARCH_APP_URL) \
 		local/chat > logs/chat.cid
 	@echo "  Chat container ID: $$(cat logs/chat.cid)"
 	@container logs -f chat > logs/chat.log 2>&1 &
@@ -165,9 +167,48 @@ code:
 stop-code:
 	@container stop code 2>/dev/null && echo "  Code container stopped." || echo "  Code container already stopped."
 
+# --- SearXNG (container) -----------------------------------------------------
+
+searxng:
+	@echo "▶ Starting SearXNG on port $(SEARXNG_PORT)..."
+	@mkdir -p logs
+	@container run --rm -d \
+		--name searxng \
+		-p $(SEARXNG_PORT):8080 \
+		-v $(CURDIR)/searxng/settings.yml:/etc/searxng/settings.yml \
+		searxng/searxng:latest > logs/searxng.cid
+	@echo "  SearXNG container ID: $$(cat logs/searxng.cid)"
+	@container logs -f searxng > logs/searxng.log 2>&1 &
+
+# --- Search service (container) ----------------------------------------------
+
+build-search:
+	@mkdir -p logs
+	@echo "▶ Building search container..."
+	@container build \
+		-t local/search -f search/Dockerfile . \
+		> logs/build-search.log 2>&1
+	@echo "  Build complete."
+
+search: build-search
+	@echo "▶ Starting search service on port $(SEARCH_APP_PORT)..."
+	@mkdir -p logs
+	@container run --rm -d \
+		--name search \
+		-p $(SEARCH_APP_PORT):$(SEARCH_APP_PORT) \
+		-e SEARXNG_URL=$(SEARXNG_URL) \
+		-e SEARCH_APP_PORT=$(SEARCH_APP_PORT) \
+		local/search > logs/search.cid
+	@echo "  Search container ID: $$(cat logs/search.cid)"
+	@container logs -f search > logs/search.log 2>&1 &
+
+stop-search:
+	@container stop search 2>/dev/null && echo "  Search stopped." || echo "  Search already stopped."
+	@container stop searxng 2>/dev/null && echo "  SearXNG stopped." || echo "  SearXNG already stopped."
+
 # --- Stop everything ---------------------------------------------------------
 
-stop: stop-llm stop-chat stop-code db-backup
+stop: stop-llm stop-chat stop-code stop-search db-backup
 	@container stop postgres 2>/dev/null && echo "  Postgres stopped." || echo "  Postgres already stopped."
 
 stop-llm:
@@ -183,7 +224,7 @@ stop-chat:
 
 logs:
 	@echo "▶ Tailing logs (Ctrl+C to stop)..."
-	@tail -f logs/llm.log logs/chat.log logs/postgres.log logs/code.log
+	@tail -f logs/llm.log logs/chat.log logs/postgres.log logs/code.log logs/search.log logs/searxng.log
 
 # --- Status ------------------------------------------------------------------
 
@@ -209,6 +250,18 @@ status:
 	@echo "=== Code Container ==="
 	@if container ps 2>/dev/null | grep -q code; then \
 		echo "  ✓ Running → http://localhost:$(CODE_CONTAINER_PORT)"; \
+	else \
+		echo "  ✗ Stopped"; \
+	fi
+	@echo "=== SearXNG ==="
+	@if container ps 2>/dev/null | grep -q searxng; then \
+		echo "  ✓ Running → http://localhost:$(SEARXNG_PORT)"; \
+	else \
+		echo "  ✗ Stopped"; \
+	fi
+	@echo "=== Search Service ==="
+	@if container ps 2>/dev/null | grep -q search; then \
+		echo "  ✓ Running → http://localhost:$(SEARCH_APP_PORT)"; \
 	else \
 		echo "  ✗ Stopped"; \
 	fi
