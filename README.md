@@ -47,6 +47,7 @@ The LLM server runs natively to get direct Metal GPU access. Everything else run
 ```bash
 git clone <your-repo> HomeServer
 cd HomeServer
+cp .env.example .env   # edit ports/model if needed
 ```
 
 ### 2. Install dependencies
@@ -92,12 +93,8 @@ make dev            # LLM server with --reload on file changes
 ### Database
 
 ```bash
-make db-backup      # manual snapshot to data/backups/
-make db-restore     # restore latest snapshot
 make db-reset       # wipe all data and backups
 ```
-
-Backups happen automatically on `make stop` and restore automatically on `make db`.
 
 ---
 
