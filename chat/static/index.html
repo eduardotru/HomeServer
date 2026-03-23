@@ -1000,6 +1000,62 @@
             .tool-result.ok {
                 color: #2a6e2a;
             }
+
+            /* ── Search result cards ────────────────────────────────────── */
+            .search-results {
+                border-top: 1px solid var(--border3);
+                background: var(--bg);
+            }
+
+            .search-result-item {
+                display: flex;
+                flex-direction: column;
+                gap: 2px;
+                padding: 8px 12px;
+                border-bottom: 1px solid var(--bg2);
+                text-decoration: none;
+                transition: background 0.1s;
+            }
+
+            .search-result-item:last-child {
+                border-bottom: none;
+            }
+            .search-result-item:hover {
+                background: var(--bg2);
+            }
+
+            .search-result-num {
+                font-size: 9px;
+                color: var(--accent);
+                letter-spacing: 0.06em;
+            }
+
+            .search-result-title {
+                font-size: 11px;
+                color: var(--text);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                font-weight: 500;
+            }
+
+            .search-result-snippet {
+                font-size: 10px;
+                color: var(--text3);
+                overflow: hidden;
+                display: -webkit-box;
+                -webkit-line-clamp: 2;
+                -webkit-box-orient: vertical;
+                line-height: 1.5;
+            }
+
+            .search-result-url {
+                font-size: 9px;
+                color: var(--text3);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
         </style>
     </head>
     <body>
@@ -1008,6 +1064,15 @@
                 <div class="header-brand">
                     <div class="brand-dot" id="brand-dot"></div>
                     <span class="brand-name">local ai</span>
+                    <span
+                        id="model-tag"
+                        style="
+                            font-size: 9px;
+                            color: var(--text3);
+                            letter-spacing: 0.04em;
+                            margin-left: 4px;
+                        "
+                    ></span>
                 </div>
                 <nav
                     style="
@@ -1211,6 +1276,29 @@
 
             // ── Init ────────────────────────────────────────────────────
             loadConversations();
+            loadModelStatus();
+
+            // Poll model status every 10s so the UI reflects swaps
+            setInterval(loadModelStatus, 10000);
+
+            async function loadModelStatus() {
+                try {
+                    const res = await fetch("/api/models");
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    const modelTag = document.getElementById("model-tag");
+                    if (modelTag && data.current) {
+                        const names = {
+                            main: "qwen3-8b",
+                            coder: "qwen2.5-coder",
+                        };
+                        modelTag.textContent =
+                            names[data.current] || data.current;
+                        modelTag.title =
+                            data.available[data.current]?.model || "";
+                    }
+                } catch {}
+            }
 
             document.addEventListener("click", (e) => {
                 if (
@@ -1268,6 +1356,14 @@
                     document
                         .getElementById("always-allow-track")
                         .classList.remove("on");
+                }
+
+                // Update model tag — agent mode uses coder, regular uses main
+                const modelTag = document.getElementById("model-tag");
+                if (modelTag) {
+                    modelTag.textContent = agentMode
+                        ? "gpt-oss-20b"
+                        : "qwen3-8b";
                 }
             }
 
@@ -1385,6 +1481,7 @@
                     read_file: "📄",
                     write_file: "✏️",
                     run_command: "⚡",
+                    web_search: "🔍",
                 };
 
                 const preview =
@@ -1392,7 +1489,9 @@
                         ? (toolCall.args.content || "").slice(0, 400)
                         : toolCall.tool === "run_command"
                           ? toolCall.args.command
-                          : JSON.stringify(toolCall.args, null, 2);
+                          : toolCall.tool === "web_search"
+                            ? toolCall.args.query
+                            : JSON.stringify(toolCall.args, null, 2);
 
                 card.innerHTML = `
       <div class="tool-card-header">
@@ -1449,16 +1548,56 @@
             }
 
             function showToolResult(card, result) {
-                // Remove existing result if any
                 card.querySelector(".tool-result")?.remove();
-                const div = document.createElement("div");
-                div.className = "tool-result " + (result.ok ? "ok" : "error");
-                const preview = result.ok
-                    ? JSON.stringify(result.result, null, 2).slice(0, 600)
-                    : result.error;
-                div.textContent = preview;
-                card.appendChild(div);
+                card.querySelector(".search-results")?.remove();
+
+                const toolCall = card._toolCall;
+
+                if (
+                    result.ok &&
+                    toolCall?.tool === "web_search" &&
+                    result.result?.results
+                ) {
+                    // Render search results as source cards
+                    const container = document.createElement("div");
+                    container.className = "search-results";
+                    const results = result.result.results;
+                    if (results.length === 0) {
+                        container.innerHTML =
+                            '<div style="padding:8px 12px;font-size:11px;color:var(--text3);">No results found.</div>';
+                    } else {
+                        container.innerHTML = results
+                            .map(
+                                (r, i) => `
+          <a class="search-result-item" href="${escHtml(r.url)}" target="_blank" rel="noopener">
+            <span class="search-result-num">[${i + 1}] ${escHtml(hostname(r.url))}</span>
+            <span class="search-result-title">${escHtml(r.title || r.url)}</span>
+            ${r.snippet ? `<span class="search-result-snippet">${escHtml(r.snippet)}</span>` : ""}
+          </a>
+        `,
+                            )
+                            .join("");
+                    }
+                    card.appendChild(container);
+                } else {
+                    const div = document.createElement("div");
+                    div.className =
+                        "tool-result " + (result.ok ? "ok" : "error");
+                    const preview = result.ok
+                        ? JSON.stringify(result.result, null, 2).slice(0, 600)
+                        : result.error;
+                    div.textContent = preview;
+                    card.appendChild(div);
+                }
                 scrollToBottom();
+            }
+
+            function hostname(url) {
+                try {
+                    return new URL(url).hostname;
+                } catch {
+                    return url;
+                }
             }
 
             // Send tool result back to LLM silently (no visible user bubble)

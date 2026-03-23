@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=False)
 
 # --- Config ------------------------------------------------------------------
 
@@ -21,8 +21,8 @@ CHAT_APP_PORT = int(os.getenv("CHAT_APP_PORT", 5000))
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://localai:localai@localhost:5432/localai"
 )
-CODE_CONTAINER_URL = os.getenv("CODE_CONTAINER_URL", "http://localhost:8002")
-SEARCH_APP_URL = os.getenv("SEARCH_APP_URL", "http://localhost:8003")
+CODE_CONTAINER_URL = os.getenv("CODE_CONTAINER_URL", "http://localhost:6000")
+SEARCH_APP_URL = os.getenv("SEARCH_APP_URL", "http://localhost:7000")
 
 # Compaction thresholds.
 # Rough estimate: 1 token ≈ 4 chars. Qwen2.5-7B has a 32k context window.
@@ -153,7 +153,7 @@ async def update_summary(
         async with httpx.AsyncClient(timeout=60) as client:
             res = await client.post(
                 f"{LLM_SERVER_URL}/generate",
-                json={"prompt": prompt, "stream": False},
+                json={"prompt": prompt, "stream": False, "model": "main"},
             )
             new_summary = res.json().get("response", "").strip()
             if new_summary:
@@ -169,7 +169,7 @@ async def update_summary(
 
 # --- Tool system prompt ------------------------------------------------------
 
-TOOL_SYSTEM_PROMPT = """You are an AI coding assistant with access to tools that let you read, write, and run code in the user's project.
+TOOL_SYSTEM_PROMPT = """You are an AI assistant with access to tools that let you search the web, read and write code, and run commands.
 
 The workspace root contains the full HomeServer project:
 - chat/       — chat app (FastAPI, serves the UI)
@@ -185,7 +185,7 @@ Do not modify .env or Makefile unless explicitly asked.
 When you want to use a tool, respond with a JSON block in this exact format:
 <tool_call>
 {
-  "tool": "read_file" | "write_file" | "run_command" | "list_directory",
+  "tool": "web_search" | "read_file" | "write_file" | "run_command" | "list_directory",
   "args": { ... },
   "destructive": true | false,
   "reason": "brief explanation of what you're doing"
@@ -195,16 +195,18 @@ When you want to use a tool, respond with a JSON block in this exact format:
 IMPORTANT: Always close the tag with </tool_call> (with a forward slash). Never repeat <tool_call> as a closing tag.
 
 Tool schemas:
+- web_search:     { "query": "search query", "num_results": 5 }
 - list_directory: { "path": "relative/path" }
 - read_file:      { "path": "relative/path/to/file" }
 - write_file:     { "path": "relative/path/to/file", "content": "full file content" }
 - run_command:    { "command": "shell command", "working_dir": "optional/path" }
 
+Mark destructive=false for web_search, list_directory, read_file, and read-only commands (ls, cat, grep, find).
 Mark destructive=true for write_file and any run_command that modifies state.
-Mark destructive=false for list_directory, read_file, and read-only commands (ls, cat, grep, find).
 
+Use web_search when you need current information, documentation, or anything beyond your training knowledge.
 After receiving a tool result, continue your response naturally based on what you found.
-You can chain multiple tool calls to accomplish a task — read first, then write.
+You can chain multiple tool calls — search first, then read files, then write.
 Always show the user what you're doing and why."""
 
 
@@ -233,7 +235,20 @@ TOOL_ROUTES = {
 
 
 async def execute_tool(tool: str, args: dict) -> dict:
-    """Route a tool call to the code container."""
+    """Route a tool call to the appropriate service."""
+    # Search tool is handled locally — calls the search service directly
+    if tool == "web_search":
+        query = args.get("query", "")
+        num_results = args.get("num_results", 5)
+        async with httpx.AsyncClient(timeout=20) as client:
+            res = await client.post(
+                f"{SEARCH_APP_URL}/search",
+                json={"query": query, "num_results": num_results},
+            )
+            res.raise_for_status()
+            return res.json()
+
+    # Code tools go to the code container
     endpoint = TOOL_ROUTES.get(tool)
     if not endpoint:
         raise ValueError(f"Unknown tool: {tool}")
@@ -258,6 +273,17 @@ async def run_tool(req: dict):
         return {"ok": True, "result": result}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/models")
+async def proxy_models():
+    """Proxy the LLM server's /models endpoint to the frontend."""
+    async with httpx.AsyncClient(timeout=5) as client:
+        try:
+            res = await client.get(f"{LLM_SERVER_URL}/models")
+            return res.json()
+        except Exception:
+            return {"current": None, "available": {}}
 
 
 @app.get("/")
@@ -399,6 +425,9 @@ async def chat(req: ChatRequest):
     # Build compacted context for the LLM
     messages = await build_context(conv_id)
 
+    # Agent mode → coder model, regular chat → main model
+    model_alias = "coder" if req.agent_mode else "main"
+
     # Inject tool system prompt as first message in agent mode
     if req.agent_mode:
         messages = [
@@ -416,7 +445,7 @@ async def chat(req: ChatRequest):
             async with client.stream(
                 "POST",
                 f"{LLM_SERVER_URL}/generate",
-                json={"messages": messages, "stream": True},
+                json={"messages": messages, "stream": True, "model": model_alias},
             ) as res:
                 async for chunk in res.aiter_text():
                     full_response.append(chunk)
@@ -459,7 +488,7 @@ async def generate_title(conv_id: uuid.UUID, user_msg: str, assistant_msg: str):
         async with httpx.AsyncClient(timeout=30) as client:
             res = await client.post(
                 f"{LLM_SERVER_URL}/generate",
-                json={"prompt": prompt, "stream": False},
+                json={"prompt": prompt, "stream": False, "model": "main"},
             )
             title = res.json().get("response", "").strip().strip('"').strip("'")[:80]
             if title:

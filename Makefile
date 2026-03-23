@@ -98,13 +98,23 @@ db-reset:
 
 db-backup:
 	@mkdir -p data/backups
-	@if container ps 2>/dev/null | grep -q postgres; then \
+	@if container inspect postgres > /dev/null 2>&1; then \
 		echo "▶ Backing up database to data/backups/..."; \
-		container exec postgres pg_dump -U $(POSTGRES_USER) $(POSTGRES_DB) \
-			> data/backups/backup-$$(date +%Y%m%d-%H%M%S).sql && \
-		echo "  Backup saved to data/backups/"; \
+		BACKUP_FILE=data/backups/backup-$$(date +%Y%m%d-%H%M%S).sql; \
+		container exec postgres pg_dump -U $(POSTGRES_USER) $(POSTGRES_DB) > $$BACKUP_FILE; \
+		if [ -s $$BACKUP_FILE ]; then \
+			echo "  Backup saved: $$BACKUP_FILE ($$(wc -l < $$BACKUP_FILE) lines)"; \
+		else \
+			echo "  ⚠ Backup file is empty — something went wrong"; \
+			rm -f $$BACKUP_FILE; \
+		fi; \
 	else \
-		echo "  Postgres not running, skipping backup."; \
+		if ls data/backups/*.sql 2>/dev/null | head -1 | grep -q sql; then \
+			echo "  Postgres not running — keeping existing backup $$(ls -t data/backups/*.sql | head -1)"; \
+		else \
+			echo "  ⚠ Postgres not running and no existing backup found."; \
+			echo "     Run 'make db && make db-backup' to create one."; \
+		fi; \
 	fi
 
 db-restore:

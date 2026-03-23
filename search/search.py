@@ -36,7 +36,7 @@ async def search(req: SearchRequest):
                     "q": req.query,
                     "format": "json",
                     "lang": req.language,
-                    "engines": "google,duckduckgo,bing",
+                    "engines": "duckduckgo,brave",
                 },
             )
             res.raise_for_status()
