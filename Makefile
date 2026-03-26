@@ -39,6 +39,7 @@ setup:
 # --- Start everything --------------------------------------------------------
 
 start: build build-code db llm chat code searxng search logs
+	@container kill buildkit
 
 restart:      stop start
 restart-chat: stop-chat build chat
@@ -74,6 +75,7 @@ llm:
 db:
 	@echo "▶ Starting Postgres on port $(POSTGRES_PORT)..."
 	@container run --rm -d \
+	    --memory 200m \
 		--name postgres \
 		-p $(POSTGRES_PORT):5432 \
 		-e POSTGRES_DB=$(POSTGRES_DB) \
@@ -110,13 +112,13 @@ chat:
 	@echo "▶ Starting chat container on port $(CHAT_APP_PORT)..."
 	@mkdir -p logs
 	@container run --rm -d \
+	    --memory 200m \
 		--name chat \
 		-p $(CHAT_APP_PORT):$(CHAT_APP_PORT) \
 		-e LLM_SERVER_URL=$(LLM_SERVER_URL) \
 		-e CHAT_APP_PORT=$(CHAT_APP_PORT) \
 		-e DATABASE_URL=$(DATABASE_URL) \
 		-e CODE_CONTAINER_URL=$(CODE_CONTAINER_URL) \
-		-e SEARCH_APP_URL=$(SEARCH_APP_URL) \
 		local/chat > logs/chat.cid
 	@echo "  Chat container ID: $$(cat logs/chat.cid)"
 	@container logs -f chat > logs/chat.log 2>&1 &
@@ -135,6 +137,7 @@ code:
 	@echo "▶ Starting code container on port $(CODE_CONTAINER_PORT)..."
 	@mkdir -p logs
 	@container run --rm -d \
+	    --memory 200m \
 		--name code \
 		-p $(CODE_CONTAINER_PORT):$(CODE_CONTAINER_PORT) \
 		-e CODE_CONTAINER_PORT=$(CODE_CONTAINER_PORT) \
@@ -151,14 +154,22 @@ stop-code:
 searxng:
 	@echo "▶ Starting SearXNG on port $(SEARXNG_PORT)..."
 	@mkdir -p logs
+	@mkdir -p data/searxng
 	@container run --rm -d \
+	    --memory 300m \
 		--name searxng \
 		-p $(SEARXNG_PORT):8080 \
-		-v $(CURDIR)/searxng/settings.yml:/etc/searxng/settings.yml \
+		-v $(CURDIR)/searxng/:/etc/searxng/ \
+		-v $(CURDIR)/data/searxng:/var/cache/searxng/ \
 		searxng/searxng:latest > logs/searxng.cid
 	@echo "  SearXNG container ID: $$(cat logs/searxng.cid)"
 	@container logs -f searxng > logs/searxng.log 2>&1 &
 
+searxng-reset:
+	@echo "⚠ Stopping SearXNG and wiping all cached data..."
+	@container stop searxng 2>/dev/null || true
+	@rm -rf $(CURDIR)/data/searxng
+	@echo "  Done. Run 'make searxng' to start fresh."
 # --- Search service (container) ----------------------------------------------
 
 build-search:
@@ -173,6 +184,7 @@ search: build-search
 	@echo "▶ Starting search service on port $(SEARCH_APP_PORT)..."
 	@mkdir -p logs
 	@container run --rm -d \
+	    --memory 200m \
 		--name search \
 		-p $(SEARCH_APP_PORT):$(SEARCH_APP_PORT) \
 		-e SEARXNG_URL=$(SEARXNG_URL) \

@@ -539,7 +539,7 @@
       <a class="source-item" href="${escHtml(r.url)}" target="_blank" rel="noopener">
         <span class="source-num">[${i + 1}]</span>
         <span class="source-title">${escHtml(r.title || r.url)}</span>
-        <span class="source-url">${escHtml(hostname(r.url))}</span>
+        <span class="source-url">${r.engine}: ${escHtml(hostname(r.url))}</span>
       </a>
     `,
                     )

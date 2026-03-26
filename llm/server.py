@@ -15,12 +15,7 @@ MAX_TOKENS = int(os.getenv("MAX_TOKENS", 8192))
 MAX_QUEUE_SIZE = int(os.getenv("MAX_QUEUE_SIZE", 20))
 
 # Available models — key is the alias used in requests
-AVAILABLE_MODELS = {
-    "main": os.getenv("LLM_MODEL", "mlx-community/Qwen3-8B-4bit"),
-    "coder": os.getenv("LLM_CODER_MODEL", "mlx-community/Llama-3.1-8B-Instruct-4bit"),
-}
-
-DEFAULT_MODEL = "coder"
+LLM_MODEL = os.getenv("LLM_MODEL", "mlx-community/Qwen3-14B-4bit")
 
 # --- Model state -------------------------------------------------------------
 # Only one model is loaded at a time. The swap lock ensures no two requests
@@ -28,53 +23,14 @@ DEFAULT_MODEL = "coder"
 
 model = None
 tokenizer = None
-current_alias = None
-_swap_lock = asyncio.Lock()
-
-
-async def ensure_model(alias: str):
-    """Load the requested model, swapping out the current one if needed."""
-    global model, tokenizer, current_alias
-
-    if alias not in AVAILABLE_MODELS:
-        raise ValueError(
-            f"Unknown model alias '{alias}'. Available: {list(AVAILABLE_MODELS)}"
-        )
-
-    if alias == current_alias:
-        return  # already loaded, nothing to do
-
-    async with _swap_lock:
-        if alias == current_alias:
-            return  # another coroutine swapped while we waited
-
-        model_name = AVAILABLE_MODELS[alias]
-        print(f"[MLX] Swapping from '{current_alias}' → '{alias}' ({model_name})...")
-
-        # Unload current model
-        model = None
-        tokenizer = None
-
-        # Load new model — runs in executor to avoid blocking the event loop
-        loop = asyncio.get_event_loop()
-        new_model, new_tokenizer = await loop.run_in_executor(
-            None, lambda: load(model_name)
-        )
-
-        model = new_model
-        tokenizer = new_tokenizer
-        current_alias = alias
-        print(f"[MLX] '{alias}' ready.")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global model, tokenizer, current_alias
-    alias = DEFAULT_MODEL
-    model_name = AVAILABLE_MODELS[alias]
-    print(f"[MLX] Loading '{alias}' ({model_name})...")
+    global model, tokenizer
+    model_name = LLM_MODEL
+    print(f"[MLX] Loading '{LLM_MODEL}' ({model_name})...")
     model, tokenizer = load(model_name)
-    current_alias = alias
     print("[MLX] Model ready.")
     asyncio.create_task(generation_worker())
     yield
@@ -103,7 +59,7 @@ async def generation_worker():
         job = await get_queue().get()
         try:
             # Swap model if needed before running the job
-            await ensure_model(job.model_alias)
+            print("[queue] Job starting...")
             await job.run()
         except Exception as e:
             print(f"[queue] Job failed: {e}")
@@ -203,10 +159,9 @@ def build_prompt(req: PromptRequest) -> str:
 async def models():
     """List available models and which is currently loaded."""
     return {
-        "current": current_alias,
+        "current": LLM_MODEL,
         "available": {
-            alias: {"model": name, "loaded": alias == current_alias}
-            for alias, name in AVAILABLE_MODELS.items()
+            "default": LLM_MODEL,
         },
     }
 
@@ -214,17 +169,18 @@ async def models():
 @app.get("/queue")
 async def queue_status():
     q = get_queue()
-    return {"queued": q.qsize(), "max": MAX_QUEUE_SIZE, "model": current_alias}
+    return {"queued": q.qsize(), "max": MAX_QUEUE_SIZE, "model": LLM_MODEL}
 
+@app.get("/clear")
+async def queue_status():
+    q = get_queue()
+    old_size = q.qsize()
+    while not q.empty():
+        q.task_done()
+    return {"queued": old_size, "max": MAX_QUEUE_SIZE, "model": LLM_MODEL}
 
 @app.post("/generate")
 async def generate(req: PromptRequest):
-    alias = req.model or DEFAULT_MODEL
-    if alias not in AVAILABLE_MODELS:
-        raise HTTPException(
-            400, f"Unknown model '{alias}'. Choose from: {list(AVAILABLE_MODELS)}"
-        )
-
     # Build prompt using the currently loaded tokenizer.
     # If a swap is needed it happens in the worker before generation.
     prompt = build_prompt(req)
@@ -236,7 +192,7 @@ async def generate(req: PromptRequest):
         )
 
     if req.stream:
-        job = StreamJob(prompt, alias)
+        job = StreamJob(prompt, LLM_MODEL)
         await q.put(job)
 
         async def stream():
@@ -246,13 +202,13 @@ async def generate(req: PromptRequest):
         return StreamingResponse(
             stream(),
             media_type="text/plain",
-            headers={"X-Model": alias},
+            headers={"X-Model": LLM_MODEL},
         )
 
-    job = CompleteJob(prompt, alias)
+    job = CompleteJob(prompt, LLM_MODEL)
     await q.put(job)
     result = await job.result()
-    return {"response": result, "model": alias}
+    return {"response": result, "model": LLM_MODEL}
 
 
 # --- Entrypoint --------------------------------------------------------------

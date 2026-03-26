@@ -17,12 +17,12 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=False)
 # --- Config ------------------------------------------------------------------
 
 LLM_SERVER_URL = os.getenv("LLM_SERVER_URL", "http://localhost:8000")
-CHAT_APP_PORT = int(os.getenv("CHAT_APP_PORT", 5000))
+CHAT_APP_PORT = int(os.getenv("CHAT_APP_PORT", 8001))
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://localai:localai@localhost:5432/localai"
 )
 CODE_CONTAINER_URL = os.getenv("CODE_CONTAINER_URL", "http://localhost:6000")
-SEARCH_APP_URL = os.getenv("SEARCH_APP_URL", "http://localhost:7000")
+SEARXNG_URL = os.getenv("SEARXNG_URL", "http://localhost:8080")
 
 # Compaction thresholds.
 # Rough estimate: 1 token ≈ 4 chars. Qwen2.5-7B has a 32k context window.
@@ -240,13 +240,7 @@ async def execute_tool(tool: str, args: dict) -> dict:
     if tool == "web_search":
         query = args.get("query", "")
         num_results = args.get("num_results", 5)
-        async with httpx.AsyncClient(timeout=20) as client:
-            res = await client.post(
-                f"{SEARCH_APP_URL}/search",
-                json={"query": query, "num_results": num_results},
-            )
-            res.raise_for_status()
-            return res.json()
+        return await search(SearchRequest(query=query, num_results=num_results))
 
     # Code tools go to the code container
     endpoint = TOOL_ROUTES.get(tool)
@@ -296,6 +290,50 @@ async def search_page():
     return FileResponse("static/search.html")
 
 
+class SearchRequest(BaseModel):
+    query: str
+    num_results: Optional[int] = 5
+    language: Optional[str] = "en"
+
+
+async def search(req: SearchRequest):
+    """Search the web via SearXNG and return clean results."""
+    async with httpx.AsyncClient(timeout=20) as client:
+        try:
+            res = await client.get(
+                f"{SEARXNG_URL}/search",
+                params={
+                    "q": req.query,
+                    "format": "json",
+                    "lang": req.language,
+                    "engines": "duckduckgo,brave",
+                },
+            )
+            res.raise_for_status()
+        except httpx.TimeoutException:
+            raise HTTPException(504, "Search timed out")
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(502, f"SearXNG error: {e.response.status_code}")
+        except httpx.RequestError as e:
+            raise HTTPException(503, f"Could not reach SearXNG: {e}")
+
+    data = res.json()
+    results = data.get("results", [])[: req.num_results]
+
+    return {
+        "query": req.query,
+        "results": [
+            {
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "snippet": r.get("content", ""),
+                "engine": r.get("engine", ""),
+            }
+            for r in results
+        ],
+    }
+
+
 class SearchChatRequest(BaseModel):
     query: str
     stream: bool = True
@@ -309,13 +347,7 @@ async def search_chat(req: SearchChatRequest):
     """
     # 1. Fetch search results
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            res = await client.post(
-                f"{SEARCH_APP_URL}/search",
-                json={"query": req.query, "num_results": 5},
-            )
-            res.raise_for_status()
-            search_data = res.json()
+        search_data = await search(SearchRequest(query=req.query, num_results=10))
     except Exception as e:
         raise HTTPException(502, f"Search failed: {e}")
 
