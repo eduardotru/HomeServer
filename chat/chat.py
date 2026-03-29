@@ -319,6 +319,7 @@ async def agent_endpoint(req: AgentRequest):
             conv_id,
             "New conversation",
         )
+        asyncio.create_task(generate_title(conv_id, req.prompt, ""))
     else:
         conv_id = uuid.UUID(req.conversation_id)
         exists = await db_pool.fetchval(
@@ -353,7 +354,11 @@ async def agent_endpoint(req: AgentRequest):
                     async with client.stream(
                         "POST",
                         f"{LLM_SERVER_URL}/generate",
-                        json={"messages": loop_messages, "stream": True, "model": "coder"},
+                        json={
+                            "messages": loop_messages,
+                            "stream": True,
+                            "model": "coder",
+                        },
                     ) as res:
                         async for chunk in res.aiter_text():
                             full_text += chunk
@@ -392,30 +397,44 @@ async def agent_endpoint(req: AgentRequest):
                     "approved": None,
                 }
 
-            yield json.dumps({
-                "e": "tool_start",
-                "d": {
-                    "tool": tool_call.get("tool", ""),
-                    "args": tool_call.get("args", {}),
-                    "destructive": bool(tool_call.get("destructive")),
-                    "reason": tool_call.get("reason", ""),
-                    "token": token,
-                },
-            }) + "\n"
+            yield (
+                json.dumps(
+                    {
+                        "e": "tool_start",
+                        "d": {
+                            "tool": tool_call.get("tool", ""),
+                            "args": tool_call.get("args", {}),
+                            "destructive": bool(tool_call.get("destructive")),
+                            "reason": tool_call.get("reason", ""),
+                            "token": token,
+                        },
+                    }
+                )
+                + "\n"
+            )
 
             if needs_confirm:
                 try:
                     await asyncio.wait_for(
                         PENDING_CONFIRMATIONS[token]["event"].wait(), timeout=300.0
                     )
-                    approved = PENDING_CONFIRMATIONS.pop(token, {}).get("approved", False)
+                    approved = PENDING_CONFIRMATIONS.pop(token, {}).get(
+                        "approved", False
+                    )
                 except asyncio.TimeoutError:
                     PENDING_CONFIRMATIONS.pop(token, None)
                     approved = False
 
                 if not approved:
-                    feedback = f"Tool call {tool_call['tool']} was cancelled by the user."
-                    yield json.dumps({"e": "tool_done", "d": {"ok": False, "error": "Cancelled"}}) + "\n"
+                    feedback = (
+                        f"Tool call {tool_call['tool']} was cancelled by the user."
+                    )
+                    yield (
+                        json.dumps(
+                            {"e": "tool_done", "d": {"ok": False, "error": "Cancelled"}}
+                        )
+                        + "\n"
+                    )
                     loop_messages += [
                         {"role": "assistant", "content": display_text},
                         {"role": "user", "content": feedback},
@@ -430,12 +449,20 @@ async def agent_endpoint(req: AgentRequest):
 
             # --- execute tool ---
             try:
-                result = await execute_tool(tool_call["tool"], tool_call.get("args", {}))
-                yield json.dumps({"e": "tool_done", "d": {"ok": True, "result": result}}) + "\n"
+                result = await execute_tool(
+                    tool_call["tool"], tool_call.get("args", {})
+                )
+                yield (
+                    json.dumps({"e": "tool_done", "d": {"ok": True, "result": result}})
+                    + "\n"
+                )
                 feedback = f"Tool result for {tool_call['tool']}:\n{json.dumps(result, indent=2)}"
             except Exception as e:
                 err_str = str(e)
-                yield json.dumps({"e": "tool_done", "d": {"ok": False, "error": err_str}}) + "\n"
+                yield (
+                    json.dumps({"e": "tool_done", "d": {"ok": False, "error": err_str}})
+                    + "\n"
+                )
                 feedback = f"Tool error for {tool_call['tool']}: {err_str}. Please try a different approach."
 
             # Feed result back into messages for next turn
@@ -449,9 +476,6 @@ async def agent_endpoint(req: AgentRequest):
                 "user",
                 feedback,
             )
-
-        if is_new and first_response:
-            asyncio.create_task(generate_title(conv_id, req.prompt, first_response))
 
         yield json.dumps({"e": "done", "d": {"conv_id": str(conv_id)}}) + "\n"
 
@@ -713,7 +737,7 @@ async def generate_title(conv_id: uuid.UUID, user_msg: str, assistant_msg: str):
         clean_assistant = re.sub(r"<think>[\s\S]*?</think>", "", assistant_msg).strip()
         prompt = (
             f"Based on this exchange, generate a short conversation title (max 6 words, no quotes):\n\n"
-            f"User: {user_msg[:200]}\nAssistant: {clean_assistant[:200]}"
+            f"User: {user_msg[:200]}\n{'Assistant:' if assistant_msg else ''} {clean_assistant[:200]}"
         )
         async with httpx.AsyncClient(timeout=30) as client:
             res = await client.post(

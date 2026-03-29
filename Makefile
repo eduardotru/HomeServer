@@ -23,6 +23,7 @@ CHAT_APP_PORT  ?= 5000
 LLM_SERVER_PORT ?= 8000
 POSTGRES_PORT  ?= 5432
 FILES_PORT     ?= 9000
+LLM_MODE       ?= local
 
 .PHONY: start stop restart restart-chat restart-llm restart-code restart-search restart-files dev logs build build-code build-search build-files kill-buildkit llm chat db db-reset code searxng search files status stop-chat stop-llm stop-code stop-search stop-files setup
 
@@ -42,7 +43,12 @@ setup:
 kill-buildkit:
 	@container kill buildkit 2>/dev/null || true
 
+# In remote mode we skip kill-buildkit (no local model to protect memory for)
+ifeq ($(LLM_MODE),remote)
+start: build build-code build-files db llm chat code searxng search files logs
+else
 start: build build-code build-files kill-buildkit db llm chat code searxng search files logs
+endif
 
 restart:        stop start
 restart-chat:   stop-chat build chat
@@ -67,11 +73,17 @@ dev: build db chat
 	@make logs
 
 # --- LLM server (native) -----------------------------------------------------
+# LLM_MODE=local  → loads model via mlx-lm (default)
+# LLM_MODE=remote → thin proxy to any OpenAI-compatible remote API
 
 llm:
-	@echo "▶ Starting LLM server on port $(LLM_SERVER_PORT)..."
+	@echo "▶ Starting LLM server (mode: $(LLM_MODE)) on port $(LLM_SERVER_PORT)..."
 	@mkdir -p logs
+ifeq ($(LLM_MODE),remote)
+	@$(CURDIR)/llm/.venv/bin/python $(CURDIR)/llm/proxy.py > $(CURDIR)/logs/llm.log 2>&1 & echo $$! > $(CURDIR)/logs/llm.pid
+else
 	@$(CURDIR)/llm/.venv/bin/python $(CURDIR)/llm/server.py > $(CURDIR)/logs/llm.log 2>&1 & echo $$! > $(CURDIR)/logs/llm.pid
+endif
 	@echo "  LLM server PID: $$(cat logs/llm.pid)"
 
 # --- Postgres (container) ----------------------------------------------------
