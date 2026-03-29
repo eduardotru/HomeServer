@@ -1,0 +1,107 @@
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+:root {
+    --bg: #f5f0e8;
+    --bg2: #ede5d8;
+    --surface: #faf6f0;
+    --border3: #d4c8b4;
+    --border2: #8c7a5a;
+    --text: #2c1f0e;
+    --text2: #5a3e28;
+    --text3: #9a8060;
+    --accent: #2260c0;
+    --accent-lt: #e0ecff;
+    --accent2: #1a4a9a;
+    --red: #b03020;
+    --mono: "Geist Mono", monospace;
+}
+
+/* ── Header ─────────────────────────────────────────────── */
+.header-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-decoration: none;
+}
+
+.brand-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-lt);
+    flex-shrink: 0;
+}
+
+@keyframes thinking-ring {
+    0%,
+    100% {
+        box-shadow: 0 0 0 2px #fef3dc;
+    }
+    50% {
+        box-shadow: 0 0 0 4px #fde9b0;
+    }
+}
+
+.brand-name {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text2);
+    letter-spacing: 0.06em;
+}
+
+nav {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: 8px;
+}
+
+.nav-link {
+    font-size: 11px;
+    color: var(--text3);
+    text-decoration: none;
+    padding: 4px 10px;
+    border-radius: 5px;
+    letter-spacing: 0.04em;
+    transition:
+        background 0.15s,
+        color 0.15s;
+}
+
+.nav-link:hover {
+    background: var(--bg2);
+    color: var(--text);
+}
+.nav-link.active {
+    background: var(--accent-lt);
+    color: var(--accent);
+}
+
+/* ── Cursor (shared between chat streaming and search streaming) ── */
+.cursor {
+    display: inline-block;
+    width: 2px;
+    height: 14px;
+    background: var(--accent);
+    margin-left: 2px;
+    vertical-align: middle;
+    border-radius: 1px;
+    animation: cur-blink 0.8s ease-in-out infinite;
+}
+
+@keyframes cur-blink {
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0;
+    }
+}

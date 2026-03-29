@@ -1,5 +1,7 @@
 import asyncio
+import json
 import os
+import re
 import uuid
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -29,6 +31,9 @@ SEARXNG_URL = os.getenv("SEARXNG_URL", "http://localhost:8080")
 # We target staying under 20k tokens to leave room for the response.
 COMPACTION_CHAR_THRESHOLD = 20_000 * 4  # ~20k tokens → trigger summarisation
 RECENT_MESSAGES_TO_KEEP = 6  # always keep the last N messages verbatim
+
+# Pending destructive-tool confirmations: token → {event, approved}
+PENDING_CONFIRMATIONS: dict[str, dict] = {}
 
 # --- Database ----------------------------------------------------------------
 
@@ -210,6 +215,25 @@ You can chain multiple tool calls — search first, then read files, then write.
 Always show the user what you're doing and why."""
 
 
+# --- Tool call parsing -------------------------------------------------------
+
+
+def _parse_tool_call(text: str) -> tuple[str, dict | None]:
+    """Extract <tool_call> block from LLM text.
+
+    Returns (preamble, tool_dict) where preamble is everything before the tag.
+    Returns (text, None) if no valid tool call is found.
+    """
+    match = re.search(r"<tool_call>([\s\S]*?)</?tool_call>", text)
+    if not match:
+        return text, None
+    try:
+        tc = json.loads(match.group(1).strip())
+    except json.JSONDecodeError:
+        return text, None
+    return text[: match.start()].rstrip(), tc
+
+
 # --- Tool execution ----------------------------------------------------------
 
 READONLY_COMMANDS = {
@@ -267,6 +291,182 @@ async def run_tool(req: dict):
         return {"ok": True, "result": result}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+class AgentRequest(BaseModel):
+    prompt: str
+    conversation_id: Optional[str] = None
+    always_allow: bool = False
+
+
+@app.post("/agent")
+async def agent_endpoint(req: AgentRequest):
+    """
+    Server-side agent loop: LLM → tool → LLM … until no more tool calls.
+    Streams newline-delimited JSON events to the client:
+      {"e":"text",      "d":"clean LLM text"}
+      {"e":"tool_start","d":{"tool":…,"args":…,"destructive":…,"reason":…,"token":…|null}}
+      {"e":"tool_done", "d":{"ok":true,"result":…} | {"ok":false,"error":…}}
+      {"e":"error",     "d":"message"}
+      {"e":"done",      "d":{"conv_id":"…"}}
+    """
+    is_new = req.conversation_id is None
+
+    if is_new:
+        conv_id = uuid.uuid4()
+        await db_pool.execute(
+            "INSERT INTO conversations (id, title) VALUES ($1, $2)",
+            conv_id,
+            "New conversation",
+        )
+    else:
+        conv_id = uuid.UUID(req.conversation_id)
+        exists = await db_pool.fetchval(
+            "SELECT id FROM conversations WHERE id = $1", conv_id
+        )
+        if not exists:
+            raise HTTPException(404, "Conversation not found")
+
+    await db_pool.execute(
+        "INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3)",
+        conv_id,
+        "user",
+        req.prompt,
+    )
+
+    messages = await build_context(conv_id)
+    messages = [
+        {"role": "user", "content": TOOL_SYSTEM_PROMPT},
+        {"role": "assistant", "content": "Understood. I'll use the tools to help you."},
+    ] + messages
+
+    async def event_stream():
+        loop_messages = list(messages)  # local copy — avoids nonlocal scoping issues
+        first_response: str | None = None
+
+        for _turn in range(10):
+            # --- accumulate full LLM response (buffered to avoid streaming
+            #     raw <tool_call> markup to the client) ---
+            full_text = ""
+            try:
+                async with httpx.AsyncClient(timeout=120) as client:
+                    async with client.stream(
+                        "POST",
+                        f"{LLM_SERVER_URL}/generate",
+                        json={"messages": loop_messages, "stream": True, "model": "coder"},
+                    ) as res:
+                        async for chunk in res.aiter_text():
+                            full_text += chunk
+            except Exception as e:
+                yield json.dumps({"e": "error", "d": str(e)}) + "\n"
+                return
+
+            preamble, tool_call = _parse_tool_call(full_text)
+            display_text = preamble if tool_call else full_text
+
+            # Emit clean text for this turn
+            if display_text.strip():
+                yield json.dumps({"e": "text", "d": display_text}) + "\n"
+
+            # Save assistant message
+            await db_pool.execute(
+                "INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3)",
+                conv_id,
+                "assistant",
+                display_text or full_text,
+            )
+
+            if first_response is None:
+                first_response = display_text or full_text
+
+            if not tool_call:
+                break  # final answer — done
+
+            # --- confirm destructive tools unless always_allow ---
+            needs_confirm = bool(tool_call.get("destructive")) and not req.always_allow
+            token: str | None = None
+            if needs_confirm:
+                token = str(uuid.uuid4())
+                PENDING_CONFIRMATIONS[token] = {
+                    "event": asyncio.Event(),
+                    "approved": None,
+                }
+
+            yield json.dumps({
+                "e": "tool_start",
+                "d": {
+                    "tool": tool_call.get("tool", ""),
+                    "args": tool_call.get("args", {}),
+                    "destructive": bool(tool_call.get("destructive")),
+                    "reason": tool_call.get("reason", ""),
+                    "token": token,
+                },
+            }) + "\n"
+
+            if needs_confirm:
+                try:
+                    await asyncio.wait_for(
+                        PENDING_CONFIRMATIONS[token]["event"].wait(), timeout=300.0
+                    )
+                    approved = PENDING_CONFIRMATIONS.pop(token, {}).get("approved", False)
+                except asyncio.TimeoutError:
+                    PENDING_CONFIRMATIONS.pop(token, None)
+                    approved = False
+
+                if not approved:
+                    feedback = f"Tool call {tool_call['tool']} was cancelled by the user."
+                    yield json.dumps({"e": "tool_done", "d": {"ok": False, "error": "Cancelled"}}) + "\n"
+                    loop_messages += [
+                        {"role": "assistant", "content": display_text},
+                        {"role": "user", "content": feedback},
+                    ]
+                    await db_pool.execute(
+                        "INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3)",
+                        conv_id,
+                        "user",
+                        feedback,
+                    )
+                    continue
+
+            # --- execute tool ---
+            try:
+                result = await execute_tool(tool_call["tool"], tool_call.get("args", {}))
+                yield json.dumps({"e": "tool_done", "d": {"ok": True, "result": result}}) + "\n"
+                feedback = f"Tool result for {tool_call['tool']}:\n{json.dumps(result, indent=2)}"
+            except Exception as e:
+                err_str = str(e)
+                yield json.dumps({"e": "tool_done", "d": {"ok": False, "error": err_str}}) + "\n"
+                feedback = f"Tool error for {tool_call['tool']}: {err_str}. Please try a different approach."
+
+            # Feed result back into messages for next turn
+            loop_messages += [
+                {"role": "assistant", "content": display_text or full_text},
+                {"role": "user", "content": feedback},
+            ]
+            await db_pool.execute(
+                "INSERT INTO messages (conversation_id, role, content) VALUES ($1, $2, $3)",
+                conv_id,
+                "user",
+                feedback,
+            )
+
+        if is_new and first_response:
+            asyncio.create_task(generate_title(conv_id, req.prompt, first_response))
+
+        yield json.dumps({"e": "done", "d": {"conv_id": str(conv_id)}}) + "\n"
+
+    return StreamingResponse(event_stream(), media_type="text/plain")
+
+
+@app.post("/agent/confirm/{token}")
+async def agent_confirm(token: str, body: dict):
+    """Resolve a pending destructive-tool confirmation."""
+    entry = PENDING_CONFIRMATIONS.get(token)
+    if not entry:
+        raise HTTPException(404, "Confirmation token not found or expired")
+    entry["approved"] = body.get("approved", False)
+    entry["event"].set()
+    return {"ok": True}
 
 
 @app.get("/api/models")
@@ -509,8 +709,6 @@ async def chat(req: ChatRequest):
 
 async def generate_title(conv_id: uuid.UUID, user_msg: str, assistant_msg: str):
     try:
-        import re
-
         # Strip thinking blocks before using as title context
         clean_assistant = re.sub(r"<think>[\s\S]*?</think>", "", assistant_msg).strip()
         prompt = (
