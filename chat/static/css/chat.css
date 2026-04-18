@@ -169,6 +169,8 @@ header {
     cursor: pointer;
     border-bottom: 1px solid var(--bg2);
     transition: background 0.1s;
+    text-decoration: none;
+    color: inherit;
 }
 
 .conv-item:last-child {

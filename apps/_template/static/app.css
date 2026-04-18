@@ -1,0 +1,26 @@
+main {
+    max-width: 720px;
+    margin: 24px auto;
+    padding: 0 16px;
+}
+
+hs-list .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 6px 0;
+}
+
+hs-list .icon {
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+}
+
+hs-list .icon:hover {
+    color: var(--fg);
+}

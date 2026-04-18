@@ -1,0 +1,182 @@
+/* Launcher + app wrapper styles. */
+
+/* Full-viewport flex column — matches chat/notes/search/routines. Without
+   this the header has no height and .app-wrapper-body's flex:1 collapses. */
+#app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    height: 100dvh;
+    width: 100%;
+}
+
+header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 20px;
+    height: 52px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border3);
+    flex-shrink: 0;
+}
+
+.apps-launcher {
+    flex: 1;
+    overflow: auto;
+    padding: 24px;
+}
+
+.apps-grid {
+    max-width: 1000px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 14px;
+}
+
+.app-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border3);
+    border-radius: var(--radius-lg);
+    color: var(--text);
+    text-decoration: none;
+    transition:
+        border-color 0.12s,
+        transform 0.12s;
+}
+
+.app-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-1px);
+    text-decoration: none;
+}
+
+.app-card-broken {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.app-icon {
+    font-size: 24px;
+    line-height: 1;
+}
+
+.app-name {
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.app-desc {
+    font-size: 12px;
+    color: var(--text3);
+    line-height: 1.4;
+}
+
+.app-error {
+    font-size: 11px;
+    color: var(--red);
+    margin-top: 4px;
+    word-break: break-word;
+}
+
+/* ── App wrapper (iframe + sidebar) ─────────────────────────── */
+
+.app-title-area {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    min-width: 0;
+}
+
+.app-title {
+    font-size: 12px;
+    color: var(--text2);
+    letter-spacing: 0.04em;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sidebar-toggle {
+    font: inherit;
+    font-size: 11px;
+    padding: 4px 10px;
+    background: var(--accent-lt);
+    color: var(--accent);
+    border: none;
+    border-radius: var(--radius);
+    cursor: pointer;
+    letter-spacing: 0.04em;
+}
+.sidebar-toggle:hover {
+    background: var(--bg2);
+}
+
+.app-wrapper-body {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.app-frame {
+    flex: 1;
+    border: 0;
+    background: var(--bg);
+    min-height: 0;
+}
+
+.app-sidebar {
+    width: 340px;
+    flex-shrink: 0;
+    background: var(--surface);
+    border-left: 1px solid var(--border3);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+#app.sidebar-hidden .app-sidebar {
+    display: none;
+}
+
+.sidebar-header {
+    padding: 10px 14px;
+    font-size: 11px;
+    color: var(--text3);
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid var(--border3);
+    background: var(--bg2);
+}
+
+.sidebar-body {
+    flex: 1;
+    overflow: auto;
+    padding: 14px;
+    font-size: 12px;
+    color: var(--text2);
+}
+
+.sidebar-note {
+    color: var(--text3);
+    line-height: 1.5;
+}
+
+.sidebar-body pre {
+    margin-top: 10px;
+    padding: 8px;
+    background: var(--bg);
+    border: 1px solid var(--border3);
+    border-radius: var(--radius);
+    font-size: 11px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}

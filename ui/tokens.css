@@ -1,0 +1,48 @@
+/* Design tokens shared across chat + all apps.
+   Keep in sync with chat/static/css/shared.css :root. */
+:root {
+    --bg: #f5f0e8;
+    --bg2: #ede5d8;
+    --surface: #faf6f0;
+    --border3: #d4c8b4;
+    --border2: #8c7a5a;
+    --text: #2c1f0e;
+    --text2: #5a3e28;
+    --text3: #9a8060;
+    --accent: #2260c0;
+    --accent-lt: #e0ecff;
+    --accent2: #1a4a9a;
+    --red: #b03020;
+    --mono: "Geist Mono", monospace;
+
+    --radius: 6px;
+    --radius-lg: 10px;
+    --gap: 12px;
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html,
+body {
+    background: var(--bg);
+    color: var(--text);
+    font-family:
+        var(--mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        monospace;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+a {
+    color: var(--accent);
+    text-decoration: none;
+}
+a:hover {
+    text-decoration: underline;
+}

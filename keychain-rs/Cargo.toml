@@ -1,0 +1,15 @@
+[package]
+name = "keychain-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Apple Secure Keychain via raw FFI — no external crates"
+
+# No [dependencies] — we bind to system frameworks directly via FFI
+
+[[bin]]
+name = "keychain-rs"
+path = "src/main.rs"
+
+[lib]
+name = "keychain_rs"
+path = "src/lib.rs"

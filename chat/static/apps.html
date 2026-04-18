@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Apps · Local AI</title>
+        <link
+            href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&display=swap"
+            rel="stylesheet"
+        />
+        <link rel="stylesheet" href="/ui/tokens.css" />
+        <link rel="stylesheet" href="/ui/kit.css" />
+        <link rel="stylesheet" href="/static/css/shared.css" />
+        <link rel="stylesheet" href="/static/css/apps.css" />
+        <script type="module" src="/ui/kit.js"></script>
+        <script type="module" src="/static/js/nav.js"></script>
+    </head>
+    <body>
+        <div id="app">
+            <header>
+                <div class="header-brand">
+                    <div class="brand-dot"></div>
+                    <span class="brand-name">local ai</span>
+                </div>
+                <nav data-shared-nav></nav>
+            </header>
+
+            <main class="apps-launcher">
+                <div class="apps-grid" id="apps-grid">
+                    <hs-empty>Loading apps…</hs-empty>
+                </div>
+            </main>
+        </div>
+
+        <script type="module">
+            import { api } from "/ui/kit.js";
+
+            const grid = document.getElementById("apps-grid");
+
+            try {
+                const { apps } = await api.get("/registry/apps");
+                const installed = apps.filter((a) => a.name !== "_template");
+
+                if (!installed.length) {
+                    grid.replaceChildren();
+                    const empty = document.createElement("hs-empty");
+                    empty.innerHTML = `
+                      <p>No apps installed yet.</p>
+                      <p style="margin-top:8px">
+                        Create one with
+                        <code>make new-app NAME=myapp</code>
+                        and restart chat.
+                      </p>`;
+                    grid.appendChild(empty);
+                } else {
+                    grid.replaceChildren();
+                    for (const app of installed) {
+                        const card = document.createElement("a");
+                        card.className = "app-card" + (app.ok ? "" : " app-card-broken");
+                        card.href = app.ok ? `/apps/${app.name}` : "#";
+                        card.innerHTML = `
+                          <div class="app-icon">${app.icon || "📦"}</div>
+                          <div class="app-name">${app.title || app.name}</div>
+                          <div class="app-desc">${app.description || ""}</div>
+                          ${app.ok ? "" : `<div class="app-error">failed to load: ${app.error || "unknown"}</div>`}
+                        `;
+                        grid.appendChild(card);
+                    }
+                }
+            } catch (e) {
+                grid.replaceChildren();
+                const empty = document.createElement("hs-empty");
+                empty.textContent = `Failed to load registry: ${e.message}`;
+                grid.appendChild(empty);
+            }
+        </script>
+    </body>
+</html>

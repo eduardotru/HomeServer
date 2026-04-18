@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hmac as hmac_lib
 import json
@@ -27,6 +28,10 @@ except Exception as e:
     raise RuntimeError(f"Invalid FILES_ENCRYPTION_KEY: {e}")
 
 INDEX_PATH = FILES_ROOT / ".index"
+MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", 100 * 1024 * 1024))  # 100 MB default
+
+# Serialises all index read-modify-write operations to prevent race conditions.
+_index_lock = asyncio.Lock()
 
 app = FastAPI()
 
@@ -192,12 +197,15 @@ async def read_file(
 async def write_file(path: str, request: Request):
     path = validate_path(path)
     body = await request.body()
+    if len(body) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail=f"File too large (max {MAX_FILE_SIZE} bytes)")
     disk_name = logical_to_disk(path)
     disk_path = FILES_ROOT / disk_name
-    disk_path.write_bytes(encrypt_bytes(body))
-    index = load_index()
-    index[path] = {"disk": disk_name, "size": len(body), "modified": disk_path.stat().st_mtime}
-    save_index(index)
+    async with _index_lock:
+        disk_path.write_bytes(encrypt_bytes(body))
+        index = load_index()
+        index[path] = {"disk": disk_name, "size": len(body), "modified": disk_path.stat().st_mtime}
+        save_index(index)
     return {"path": path, "written": len(body)}
 
 
@@ -205,40 +213,41 @@ async def write_file(path: str, request: Request):
 async def append_file(path: str, request: Request):
     path = validate_path(path)
     body = await request.body()
-    index = load_index()
-    disk_name = logical_to_disk(path)
-    disk_path = FILES_ROOT / disk_name
-    if path in index:
-        existing = decrypt_bytes(disk_path.read_bytes())
-    else:
-        existing = b""
-    combined = existing + body
-    disk_path.write_bytes(encrypt_bytes(combined))
-    index[path] = {"disk": disk_name, "size": len(combined), "modified": disk_path.stat().st_mtime}
-    save_index(index)
+    async with _index_lock:
+        disk_name = logical_to_disk(path)
+        disk_path = FILES_ROOT / disk_name
+        index = load_index()
+        existing = decrypt_bytes(disk_path.read_bytes()) if path in index else b""
+        combined = existing + body
+        if len(combined) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=413, detail=f"File too large (max {MAX_FILE_SIZE} bytes)")
+        disk_path.write_bytes(encrypt_bytes(combined))
+        index[path] = {"disk": disk_name, "size": len(combined), "modified": disk_path.stat().st_mtime}
+        save_index(index)
     return {"path": path, "appended": len(body)}
 
 
 @app.delete("/file/{path:path}")
-def delete_path(path: str, recursive: bool = False):
+async def delete_path(path: str, recursive: bool = False):
     path = validate_path(path)
-    index = load_index()
-    if path in index:
-        (FILES_ROOT / index[path]["disk"]).unlink(missing_ok=True)
-        del index[path]
+    async with _index_lock:
+        index = load_index()
+        if path in index:
+            (FILES_ROOT / index[path]["disk"]).unlink(missing_ok=True)
+            del index[path]
+            save_index(index)
+            return {"deleted": path}
+        # Virtual directory deletion
+        dir_prefix = path.rstrip("/") + "/"
+        children = [k for k in index if k.startswith(dir_prefix)]
+        if not children:
+            raise HTTPException(status_code=404, detail="Path not found")
+        if not recursive:
+            raise HTTPException(status_code=400, detail="Directory not empty. Use ?recursive=true")
+        for child in children:
+            (FILES_ROOT / index[child]["disk"]).unlink(missing_ok=True)
+            del index[child]
         save_index(index)
-        return {"deleted": path}
-    # Virtual directory deletion
-    dir_prefix = path.rstrip("/") + "/"
-    children = [k for k in index if k.startswith(dir_prefix)]
-    if not children:
-        raise HTTPException(status_code=404, detail="Path not found")
-    if not recursive:
-        raise HTTPException(status_code=400, detail="Directory not empty. Use ?recursive=true")
-    for child in children:
-        (FILES_ROOT / index[child]["disk"]).unlink(missing_ok=True)
-        del index[child]
-    save_index(index)
     return {"deleted": path}
 
 

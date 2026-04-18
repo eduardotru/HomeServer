@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Local AI · Notes</title>
+        <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
+        <link rel="stylesheet" href="/static/css/shared.css" />
+        <link rel="stylesheet" href="/static/css/notes.css" />
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js"></script>
+        <script type="module" src="/static/js/nav.js"></script>
+    </head>
+    <body>
+        <header>
+            <a class="header-brand" href="/">
+                <div class="brand-dot" id="brand-dot"></div>
+                <span class="brand-name">local ai</span>
+            </a>
+            <nav data-shared-nav></nav>
+            <div class="header-actions">
+                <button class="hdr-btn" id="new-btn" onclick="newFile()" title="New file">+ new</button>
+            </div>
+        </header>
+
+        <div class="workspace">
+            <!-- File tree -->
+            <aside class="sidebar" id="sidebar">
+                <div class="sidebar-path" id="sidebar-path">/</div>
+                <div class="tree" id="tree">
+                    <div class="tree-empty">Loading…</div>
+                </div>
+            </aside>
+
+            <!-- Editor / viewer -->
+            <main class="editor-pane" id="editor-pane">
+                <div class="welcome" id="welcome">
+                    <div class="welcome-icon">📄</div>
+                    <div class="welcome-title">Notes</div>
+                    <div class="welcome-sub">Select a file to view, or create a new one.<br>The AI can read and write here too.</div>
+                </div>
+
+                <!-- File view/edit area (hidden until a file is open) -->
+                <div class="file-view" id="file-view" style="display:none">
+                    <div class="file-toolbar">
+                        <span class="file-path" id="file-path"></span>
+                        <div class="toolbar-actions">
+                            <button class="tb-btn" id="edit-btn" onclick="startEdit()">edit</button>
+                            <button class="tb-btn" id="save-btn" onclick="saveFile()" style="display:none">save</button>
+                            <button class="tb-btn" id="cancel-btn" onclick="cancelEdit()" style="display:none">cancel</button>
+                            <button class="tb-btn danger" onclick="deleteFile()">delete</button>
+                        </div>
+                    </div>
+                    <div class="file-body" id="file-body"></div>
+                    <textarea class="file-editor" id="file-editor" style="display:none" spellcheck="false"></textarea>
+                </div>
+            </main>
+        </div>
+
+        <!-- New file dialog -->
+        <div class="modal-backdrop" id="modal-backdrop" onclick="closeModal()"></div>
+        <div class="modal" id="modal">
+            <div class="modal-header">
+                <span class="modal-title" id="modal-title">New File</span>
+                <button class="modal-close" onclick="closeModal()">✕</button>
+            </div>
+            <form class="modal-body" onsubmit="createFile(event)">
+                <label class="field-label">Path <span class="field-hint">(e.g. notes/ideas.md)</span></label>
+                <input class="field-input" id="f-path" type="text" placeholder="notes/ideas.md" required autocomplete="off" />
+                <label class="field-label">Content <span class="field-hint">(optional)</span></label>
+                <textarea class="field-input field-textarea" id="f-content" placeholder="# My Note"></textarea>
+                <div class="modal-actions">
+                    <button type="button" class="btn-ghost" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn-primary">Create</button>
+                </div>
+            </form>
+        </div>
+
+        <script src="/static/js/shared.js"></script>
+        <script src="/static/js/notes.js"></script>
+    </body>
+</html>

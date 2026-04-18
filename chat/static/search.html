@@ -4,18 +4,13 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>Local AI · Search</title>
-        <link
-            href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&display=swap"
-            rel="stylesheet"
-        />
-        <link
-            rel="stylesheet"
-            href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css"
-        />
+        <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
         <link rel="stylesheet" href="/static/css/shared.css" />
         <link rel="stylesheet" href="/static/css/search.css" />
         <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js"></script>
+        <script type="module" src="/static/js/nav.js"></script>
     </head>
     <body>
         <header>
@@ -23,60 +18,65 @@
                 <div class="brand-dot" id="brand-dot"></div>
                 <span class="brand-name">local ai</span>
             </a>
-            <nav>
-                <a class="nav-link" href="/">chat</a>
-                <a class="nav-link active" href="/search">search</a>
-            </nav>
+            <nav data-shared-nav></nav>
+
+            <!-- History dropdown -->
+            <button class="hist-btn" id="hist-btn" onclick="toggleHistory()" title="Search history">
+                <svg viewBox="0 0 16 16" fill="none" width="14" height="14">
+                    <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5"/>
+                    <path d="M8 5v3.5l2 1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+                <span>history</span>
+                <span class="hist-chevron" id="hist-chevron">▾</span>
+            </button>
+            <div class="hist-dropdown" id="hist-dropdown">
+                <div class="hist-list" id="hist-list">
+                    <div class="hist-empty">No searches yet</div>
+                </div>
+                <div class="hist-footer">
+                    <button class="hist-new-btn" onclick="newSearch()">+ new search</button>
+                </div>
+            </div>
+
             <span class="header-status" id="status-text"></span>
         </header>
 
         <main>
-            <div class="search-wrap">
-                <label class="search-label" for="search-input"
-                    >search the web, get an AI answer</label
-                >
+            <div class="search-wrap" id="search-wrap">
+                <label class="search-label" for="search-input">ask a question, get a researched answer</label>
                 <div class="search-row">
                     <div class="search-box">
                         <span class="search-icon">⌕</span>
-                        <input
-                            id="search-input"
-                            type="text"
-                            placeholder="Ask anything..."
-                            autocomplete="off"
-                            autofocus
-                        />
+                        <input id="search-input" type="text" placeholder="Ask anything..." autocomplete="off" autofocus />
                     </div>
                     <button id="search-btn" onclick="doSearch()" title="Search">
                         <svg viewBox="0 0 16 16" fill="none">
-                            <circle
-                                cx="6.5"
-                                cy="6.5"
-                                r="4"
-                                stroke="white"
-                                stroke-width="1.5"
-                            />
-                            <path
-                                d="M10 10L13.5 13.5"
-                                stroke="white"
-                                stroke-width="1.5"
-                                stroke-linecap="round"
-                            />
+                            <circle cx="6.5" cy="6.5" r="4" stroke="white" stroke-width="1.5" />
+                            <path d="M10 10L13.5 13.5" stroke="white" stroke-width="1.5" stroke-linecap="round" />
                         </svg>
                     </button>
                 </div>
             </div>
 
             <div class="results-grid" id="results-grid" style="display: none">
-                <div class="answer-card">
-                    <div class="answer-header">
-                        <div class="answer-header-dot"></div>
-                        <span id="answer-label">AI ANSWER</span>
-                    </div>
-                    <div class="answer-body empty" id="answer-body">
-                        Search to get an answer…
+                <!-- Left: thread of Q&A turns -->
+                <div class="thread-col">
+                    <div class="search-thread" id="search-thread"></div>
+
+                    <!-- Follow-up input (shown after first answer) -->
+                    <div class="followup-row" id="followup-row" style="display:none">
+                        <div class="followup-box">
+                            <input id="followup-input" type="text" placeholder="Ask a follow-up question…" autocomplete="off" />
+                        </div>
+                        <button id="followup-btn" onclick="doFollowUp()" title="Follow-up">
+                            <svg viewBox="0 0 16 16" fill="none">
+                                <path d="M3 8h10M9 4l4 4-4 4" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </button>
                     </div>
                 </div>
 
+                <!-- Right: accumulated sources -->
                 <div class="sources-card">
                     <div class="sources-header">Sources</div>
                     <div id="sources-list">

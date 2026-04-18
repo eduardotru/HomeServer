@@ -1,0 +1,15 @@
+{
+    "name": "_template",
+    "title": "Template",
+    "description": "Minimal CRUD example. Copy this directory with the `new_app` tool, then edit the schema in migrations/, the routes in app.py, and the UI in static/.",
+    "icon": "📦",
+    "version": "0.1.0",
+    "tables": {
+        "items": "Example table with id, name, created_at"
+    },
+    "capabilities": [
+        "list items",
+        "add item",
+        "delete item"
+    ]
+}

@@ -18,13 +18,15 @@ server:
   port: 8080
   base_url: false
   image_proxy: false
+  limiter: false # local-only instance, no need for bot detection
 
 ui:
   static_use_hash: true
   default_theme: simple
   center_alignment: true
 
-# Disable all engines except the ones we want
+# Multiple engines for resilience — if one gets rate-limited, others pick up.
+# SearXNG deduplicates and merges results automatically.
 engines:
   - name: duckduckgo
     engine: duckduckgo
@@ -32,6 +34,22 @@ engines:
 
   - name: brave
     engine: brave
+    disabled: false
+
+  - name: qwant
+    engine: qwant
+    disabled: false
+
+  - name: mojeek
+    engine: mojeek
+    disabled: false
+
+  - name: wikipedia
+    engine: wikipedia
+    disabled: false
+
+  - name: startpage
+    engine: startpage
     disabled: false
 
 outgoing:

@@ -1,0 +1,98 @@
+   0.004491708s  INFO prepare_target{force=false package_id=keychain-rs v0.1.0 (/Users/eduardotr/HomeServer/keychain-rs) target="keychain_rs"}: cargo::core::compiler::fingerprint: fingerprint error for keychain-rs v0.1.0 (/Users/eduardotr/HomeServer/keychain-rs)/Check { test: false }/TargetInner { ..: lib_target("keychain_rs", ["lib"], "/Users/eduardotr/HomeServer/keychain-rs/src/lib.rs", Edition2021) }
+   0.004810666s  INFO prepare_target{force=false package_id=keychain-rs v0.1.0 (/Users/eduardotr/HomeServer/keychain-rs) target="keychain_rs"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/eduardotr/HomeServer/keychain-rs/target/debug/.fingerprint/keychain-rs-5e0f77e36d7fe5f9/lib-keychain_rs`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   7: cargo::ops::cargo_compile::compile_ws
+   8: cargo::ops::cargo_compile::compile_with_exec
+   9: cargo::ops::cargo_compile::compile
+  10: cargo::commands::check::exec
+  11: <cargo::cli::Exec>::exec
+  12: cargo::main
+  13: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  14: std::rt::lang_start::<()>::{closure#0}
+  15: std::rt::lang_start_internal
+  16: _main
+   0.016560500s  INFO prepare_target{force=false package_id=keychain-rs v0.1.0 (/Users/eduardotr/HomeServer/keychain-rs) target="keychain_rs"}: cargo::core::compiler::fingerprint: fingerprint error for keychain-rs v0.1.0 (/Users/eduardotr/HomeServer/keychain-rs)/Check { test: true }/TargetInner { ..: lib_target("keychain_rs", ["lib"], "/Users/eduardotr/HomeServer/keychain-rs/src/lib.rs", Edition2021) }
+   0.016569166s  INFO prepare_target{force=false package_id=keychain-rs v0.1.0 (/Users/eduardotr/HomeServer/keychain-rs) target="keychain_rs"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/eduardotr/HomeServer/keychain-rs/target/debug/.fingerprint/keychain-rs-068f6854b98c02bb/test-lib-keychain_rs`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   7: cargo::ops::cargo_compile::compile_ws
+   8: cargo::ops::cargo_compile::compile_with_exec
+   9: cargo::ops::cargo_compile::compile
+  10: cargo::commands::check::exec
+  11: <cargo::cli::Exec>::exec
+  12: cargo::main
+  13: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  14: std::rt::lang_start::<()>::{closure#0}
+  15: std::rt::lang_start_internal
+  16: _main
+   0.016740041s  INFO prepare_target{force=false package_id=keychain-rs v0.1.0 (/Users/eduardotr/HomeServer/keychain-rs) target="keychain-rs"}: cargo::core::compiler::fingerprint: fingerprint error for keychain-rs v0.1.0 (/Users/eduardotr/HomeServer/keychain-rs)/Check { test: false }/TargetInner { name: "keychain-rs", doc: true, ..: with_path("/Users/eduardotr/HomeServer/keychain-rs/src/main.rs", Edition2021) }
+   0.016745625s  INFO prepare_target{force=false package_id=keychain-rs v0.1.0 (/Users/eduardotr/HomeServer/keychain-rs) target="keychain-rs"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/eduardotr/HomeServer/keychain-rs/target/debug/.fingerprint/keychain-rs-60bae51ca10ec8f7/bin-keychain-rs`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   7: cargo::ops::cargo_compile::compile_ws
+   8: cargo::ops::cargo_compile::compile_with_exec
+   9: cargo::ops::cargo_compile::compile
+  10: cargo::commands::check::exec
+  11: <cargo::cli::Exec>::exec
+  12: cargo::main
+  13: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  14: std::rt::lang_start::<()>::{closure#0}
+  15: std::rt::lang_start_internal
+  16: _main
+   0.016909958s  INFO prepare_target{force=false package_id=keychain-rs v0.1.0 (/Users/eduardotr/HomeServer/keychain-rs) target="keychain-rs"}: cargo::core::compiler::fingerprint: fingerprint error for keychain-rs v0.1.0 (/Users/eduardotr/HomeServer/keychain-rs)/Check { test: true }/TargetInner { name: "keychain-rs", doc: true, ..: with_path("/Users/eduardotr/HomeServer/keychain-rs/src/main.rs", Edition2021) }
+   0.016913583s  INFO prepare_target{force=false package_id=keychain-rs v0.1.0 (/Users/eduardotr/HomeServer/keychain-rs) target="keychain-rs"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/eduardotr/HomeServer/keychain-rs/target/debug/.fingerprint/keychain-rs-96a4f2233b94cb4a/test-bin-keychain-rs`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   7: cargo::ops::cargo_compile::compile_ws
+   8: cargo::ops::cargo_compile::compile_with_exec
+   9: cargo::ops::cargo_compile::compile
+  10: cargo::commands::check::exec
+  11: <cargo::cli::Exec>::exec
+  12: cargo::main
+  13: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  14: std::rt::lang_start::<()>::{closure#0}
+  15: std::rt::lang_start_internal
+  16: _main
+    Checking keychain-rs v0.1.0 (/Users/eduardotr/HomeServer/keychain-rs)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.42s

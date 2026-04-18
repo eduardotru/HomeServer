@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Local AI</title>
+        <link
+            href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&display=swap"
+            rel="stylesheet"
+        />
+        <link rel="stylesheet" href="/ui/tokens.css" />
+        <link rel="stylesheet" href="/ui/kit.css" />
+        <link rel="stylesheet" href="/static/css/shared.css" />
+        <link rel="stylesheet" href="/static/css/apps.css" />
+        <script type="module" src="/static/js/nav.js"></script>
+    </head>
+    <body>
+        <div id="app">
+            <header>
+                <div class="header-brand">
+                    <div class="brand-dot"></div>
+                    <span class="brand-name">local ai</span>
+                </div>
+                <nav data-shared-nav></nav>
+                <div class="app-title-area">
+                    <span id="app-title" class="app-title"></span>
+                </div>
+                <div class="header-right">
+                    <button
+                        id="toggle-sidebar"
+                        class="sidebar-toggle"
+                        title="Toggle AI sidebar"
+                    >
+                        ✨ ai
+                    </button>
+                </div>
+            </header>
+
+            <div class="app-wrapper-body">
+                <iframe
+                    id="app-frame"
+                    class="app-frame"
+                    title="App"
+                    sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                ></iframe>
+                <aside class="app-sidebar" id="app-sidebar">
+                    <div class="sidebar-header">
+                        <span>AI · <span id="sidebar-app-name"></span></span>
+                    </div>
+                    <div class="sidebar-body">
+                        <p class="sidebar-note">
+                            Chat sidebar placeholder. In the next iteration this
+                            will embed the chat UI scoped to this app's context.
+                            Events from the app frame will land here via
+                            <code>postMessage</code>.
+                        </p>
+                        <pre id="sidebar-events"></pre>
+                    </div>
+                </aside>
+            </div>
+        </div>
+
+        <script type="module">
+            const parts = window.location.pathname.split("/").filter(Boolean);
+            // /apps/<name> → name
+            const appName = parts[1];
+
+            document.getElementById("app-title").textContent = appName;
+            document.getElementById("sidebar-app-name").textContent = appName;
+
+            const frame = document.getElementById("app-frame");
+            frame.src = `/apps/${appName}/app/`;
+
+            const eventsEl = document.getElementById("sidebar-events");
+            const eventLog = [];
+            window.addEventListener("message", (e) => {
+                if (!e.data || !e.data.hsEvent) return;
+                eventLog.unshift(
+                    `${new Date().toLocaleTimeString()} · ${e.data.hsEvent} · ${JSON.stringify(e.data.detail ?? {})}`
+                );
+                eventsEl.textContent = eventLog.slice(0, 20).join("\n");
+            });
+
+            document
+                .getElementById("toggle-sidebar")
+                .addEventListener("click", () => {
+                    document
+                        .getElementById("app")
+                        .classList.toggle("sidebar-hidden");
+                });
+        </script>
+    </body>
+</html>

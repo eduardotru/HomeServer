@@ -19,13 +19,14 @@
 include .env
 export
 
-CHAT_APP_PORT  ?= 5000
+CHAT_APP_PORT   ?= 5000
 LLM_SERVER_PORT ?= 8000
-POSTGRES_PORT  ?= 5432
-FILES_PORT     ?= 9000
-LLM_MODE       ?= local
+LLM_EMBED_PORT  ?= 8010
+POSTGRES_PORT   ?= 5432
+FILES_PORT      ?= 9000
+LLM_MODE        ?= local
 
-.PHONY: start stop restart restart-chat restart-llm restart-code restart-search restart-files dev logs build build-code build-search build-files kill-buildkit llm chat db db-reset code searxng search files status stop-chat stop-llm stop-code stop-search stop-files setup
+.PHONY: start stop restart restart-chat restart-llm restart-embed restart-code restart-search restart-files dev logs build build-code build-search build-files kill-buildkit llm embed chat db db-reset code searxng search files status stop-chat stop-llm stop-embed stop-code stop-search stop-files setup new-app
 
 # --- Setup -------------------------------------------------------------------
 
@@ -45,14 +46,15 @@ kill-buildkit:
 
 # In remote mode we skip kill-buildkit (no local model to protect memory for)
 ifeq ($(LLM_MODE),remote)
-start: build build-code build-files db llm chat code searxng search files logs
+start: build build-code build-files db llm embed chat code searxng search files logs
 else
-start: build build-code build-files kill-buildkit db llm chat code searxng search files logs
+start: build build-code build-files kill-buildkit db llm embed chat code searxng search files logs
 endif
 
 restart:        stop start
 restart-chat:   stop-chat build chat
 restart-llm:    stop-llm llm
+restart-embed:  stop-embed embed
 restart-code:   stop-code build-code code
 restart-search: stop-search build-search search
 restart-files:  stop-files build-files files
@@ -86,6 +88,21 @@ else
 endif
 	@echo "  LLM server PID: $$(cat logs/llm.pid)"
 
+# --- Embedding service (native) ----------------------------------------------
+# First run downloads the model (~274 MB) from HuggingFace automatically.
+
+embed:
+	@echo "▶ Starting embedding service on port $(LLM_EMBED_PORT)..."
+	@mkdir -p logs
+	@$(CURDIR)/llm/.venv/bin/python $(CURDIR)/llm/embed.py > $(CURDIR)/logs/embed.log 2>&1 & echo $$! > $(CURDIR)/logs/embed.pid
+	@echo "  Embed service PID: $$(cat logs/embed.pid)"
+
+stop-embed:
+	@if [ -f logs/embed.pid ]; then \
+		kill $$(cat logs/embed.pid) 2>/dev/null && echo "  Embed service stopped." || echo "  Embed service already stopped."; \
+		rm -f logs/embed.pid; \
+	fi
+
 # --- Postgres (container) ----------------------------------------------------
 
 db:
@@ -99,9 +116,8 @@ db:
 		-e POSTGRES_PASSWORD=$(POSTGRES_PASSWORD) \
 		-v $(CURDIR)/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql \
 		-v $(CURDIR)/data/postgres:/var/lib/postgresql \
-		postgres:16-alpine > logs/postgres.cid
+		pgvector/pgvector:pg16 > logs/postgres.cid
 	@echo "  Postgres container ID: $$(cat logs/postgres.cid)"
-	@container logs -f postgres > logs/postgres.log 2>&1 &
 	@echo "  Waiting for Postgres to be ready..."
 	@for i in $$(seq 1 20); do \
 		container exec postgres pg_isready -U $(POSTGRES_USER) > /dev/null 2>&1 && break; \
@@ -128,16 +144,37 @@ chat:
 	@echo "▶ Starting chat container on port $(CHAT_APP_PORT)..."
 	@mkdir -p logs
 	@container run --rm -d \
-	    --memory 200m \
+	    --memory 300m \
 		--name chat \
 		-p $(CHAT_APP_PORT):$(CHAT_APP_PORT) \
 		-e LLM_SERVER_URL=$(LLM_SERVER_URL) \
 		-e CHAT_APP_PORT=$(CHAT_APP_PORT) \
 		-e DATABASE_URL=$(DATABASE_URL) \
 		-e CODE_CONTAINER_URL=$(CODE_CONTAINER_URL) \
+		-v $(CURDIR)/apps:/apps \
+		-v $(CURDIR)/ui:/ui \
 		local/chat > logs/chat.cid
 	@echo "  Chat container ID: $$(cat logs/chat.cid)"
-	@container logs -f chat > logs/chat.log 2>&1 &
+
+# --- Apps --------------------------------------------------------------------
+# `make new-app NAME=splitwise` scaffolds a new app from apps/_template.
+# Chat picks it up automatically on next restart (make restart-chat).
+
+new-app:
+	@if [ -z "$(NAME)" ]; then \
+		echo "usage: make new-app NAME=<app-name>"; exit 1; \
+	fi
+	@echo "$(NAME)" | grep -Eq '^[a-z][a-z0-9_-]*$$' || { \
+		echo "app name must match ^[a-z][a-z0-9_-]*$$"; exit 1; \
+	}
+	@if [ -e apps/$(NAME) ]; then \
+		echo "apps/$(NAME) already exists"; exit 1; \
+	fi
+	@cp -r apps/_template apps/$(NAME)
+	@SCHEMA=$$(echo "$(NAME)" | tr '-' '_'); \
+	find apps/$(NAME) -type f \( -name '*.py' -o -name '*.json' -o -name '*.sql' -o -name '*.html' -o -name '*.js' -o -name '*.css' -o -name '*.md' \) \
+	  -exec sed -i '' "s/app__template/app_$$SCHEMA/g; s/_template/$(NAME)/g" {} \;
+	@echo "▶ Created apps/$(NAME). Restart chat to mount it: make restart-chat"
 
 # --- Code container ----------------------------------------------------------
 
@@ -160,7 +197,6 @@ code:
 		-v $(CURDIR):/workspace \
 		local/code > logs/code.cid
 	@echo "  Code container ID: $$(cat logs/code.cid)"
-	@container logs -f code > logs/code.log 2>&1 &
 
 stop-code:
 	@container stop code 2>/dev/null && echo "  Code container stopped." || echo "  Code container already stopped."
@@ -179,7 +215,6 @@ searxng:
 		-v $(CURDIR)/data/searxng:/var/cache/searxng/ \
 		searxng/searxng:latest > logs/searxng.cid
 	@echo "  SearXNG container ID: $$(cat logs/searxng.cid)"
-	@container logs -f searxng > logs/searxng.log 2>&1 &
 
 searxng-reset:
 	@echo "⚠ Stopping SearXNG and wiping all cached data..."
@@ -210,14 +245,13 @@ files:
 		-v $(CURDIR)/data/files:/data/files \
 		local/files > logs/files.cid
 	@echo "  Files container ID: $$(cat logs/files.cid)"
-	@container logs -f files > logs/files.log 2>&1 &
 
 stop-files:
 	@container stop files 2>/dev/null && echo "  Files service stopped." || echo "  Files service already stopped."
 
 # --- Stop everything ---------------------------------------------------------
 
-stop: stop-llm stop-chat stop-code stop-files
+stop: stop-llm stop-embed stop-chat stop-code stop-files
 	@container stop postgres 2>/dev/null && echo "  Postgres stopped." || echo "  Postgres already stopped."
 	@container stop searxng 2>/dev/null && echo "  Searxng stopped." || echo "  Searxng already stopped."
 
@@ -234,8 +268,13 @@ stop-chat:
 # --- Logs --------------------------------------------------------------------
 
 logs:
+	@container logs -f files > logs/files.log 2>&1 &
+	@container logs -f postgres > logs/postgres.log 2>&1 &
+	@container logs -f chat > logs/chat.log 2>&1 &
+	@container logs -f code > logs/code.log 2>&1 &
+	@container logs -f searxng > logs/searxng.log 2>&1 &
 	@echo "▶ Tailing logs (Ctrl+C to stop)..."
-	@tail -f logs/llm.log logs/chat.log logs/postgres.log logs/code.log logs/search.log logs/searxng.log logs/files.log
+	@tail -f logs/llm.log logs/embed.log logs/chat.log logs/postgres.log logs/code.log logs/search.log logs/searxng.log logs/files.log
 
 # --- Status ------------------------------------------------------------------
 

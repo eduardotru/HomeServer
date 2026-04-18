@@ -1,0 +1,20 @@
+{
+    "name": "splitwise",
+    "title": "Splitwise",
+    "icon": "💰",
+    "description": "Track shared expenses — add friends, log who paid for what, see per-person totals.",
+    "version": "0.1.0",
+    "tables": {
+        "friends": "People who can pay for expenses",
+        "expenses": "Individual paid expenses, referencing a payer",
+        "expense_participants": "M:N — which friends share each expense"
+    },
+    "capabilities": [
+        "list friends",
+        "add/remove friend",
+        "list expenses",
+        "add/remove expense (with payer + participant split)",
+        "per-friend total paid",
+        "net debts between pairs (who owes whom)"
+    ]
+}

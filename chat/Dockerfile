@@ -13,7 +13,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Build from platform root: container build -t chat -f chat/Dockerfile .
 COPY .env .
 COPY chat/chat.py .
+COPY chat/apps_loader.py .
 COPY chat/static/ ./static/
+COPY apps/ /apps/
+COPY ui/ /ui/
 
 EXPOSE ${CHAT_APP_PORT}
 

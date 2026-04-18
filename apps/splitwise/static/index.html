@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Splitwise</title>
+        <link rel="stylesheet" href="/ui/tokens.css" />
+        <link rel="stylesheet" href="/ui/kit.css" />
+        <link rel="stylesheet" href="./app.css" />
+        <script type="module" src="/ui/kit.js"></script>
+    </head>
+    <body>
+        <main>
+            <hs-card>
+                <h1 slot="title">Friends</h1>
+
+                <hs-form id="friend-form">
+                    <hs-field label="Name">
+                        <hs-input name="name" placeholder="e.g. Alice" required></hs-input>
+                    </hs-field>
+                    <hs-button type="submit" variant="primary">Add friend</hs-button>
+                </hs-form>
+
+                <hs-list id="friends"></hs-list>
+            </hs-card>
+
+            <hs-card>
+                <h1 slot="title">Expenses</h1>
+
+                <hs-form id="expense-form">
+                    <hs-field label="Description">
+                        <hs-input name="description" placeholder="e.g. Dinner" required></hs-input>
+                    </hs-field>
+                    <hs-field label="Amount (cents)">
+                        <hs-input name="amount_cents" type="number" min="1" required></hs-input>
+                    </hs-field>
+                    <hs-field label="Paid by">
+                        <select name="payer_id" id="payer-select" required></select>
+                    </hs-field>
+
+                    <hs-field label="Split among">
+                        <div class="participants" id="participants">
+                            <small class="muted">Add a friend first.</small>
+                        </div>
+                    </hs-field>
+
+                    <hs-button type="submit" variant="primary">Add expense</hs-button>
+                </hs-form>
+
+                <hs-list id="expenses"></hs-list>
+            </hs-card>
+
+            <hs-card>
+                <h1 slot="title">Who owes whom</h1>
+                <div id="debts" class="debts">
+                    <small class="muted">No debts yet.</small>
+                </div>
+            </hs-card>
+
+            <hs-card>
+                <h1 slot="title">Totals paid</h1>
+                <hs-table id="summary"></hs-table>
+            </hs-card>
+        </main>
+
+        <script type="module" src="./app.js"></script>
+    </body>
+</html>

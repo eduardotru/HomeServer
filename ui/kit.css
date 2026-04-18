@@ -1,0 +1,143 @@
+/* Base styles for the <hs-*> web components.
+   Components use light-DOM (not shadow) so apps can override freely. */
+
+hs-card {
+    display: block;
+    background: var(--surface);
+    border: 1px solid var(--border3);
+    border-radius: var(--radius-lg);
+    padding: 16px;
+    margin-bottom: var(--gap);
+}
+hs-card > h1,
+hs-card > h2,
+hs-card > h3,
+hs-card [slot="title"] {
+    font-size: 14px;
+    font-weight: 500;
+    margin-bottom: 8px;
+    color: var(--text);
+}
+
+hs-button {
+    display: inline-block;
+}
+hs-button > button {
+    font: inherit;
+    padding: 6px 14px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border3);
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    transition:
+        background 0.12s,
+        border-color 0.12s;
+}
+hs-button > button:hover {
+    background: var(--bg2);
+    border-color: var(--border2);
+}
+hs-button[variant="primary"] > button {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+}
+hs-button[variant="primary"] > button:hover {
+    background: var(--accent2);
+    border-color: var(--accent2);
+}
+hs-button[variant="danger"] > button {
+    color: var(--red);
+}
+
+hs-input > input,
+hs-input > textarea {
+    font: inherit;
+    width: 100%;
+    padding: 6px 10px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border3);
+    background: var(--bg);
+    color: var(--text);
+}
+hs-input > input:focus,
+hs-input > textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+hs-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 10px;
+}
+hs-field > label {
+    font-size: 11px;
+    color: var(--text3);
+    letter-spacing: 0.04em;
+}
+
+hs-form {
+    display: block;
+}
+
+hs-list {
+    display: block;
+}
+hs-list > ul {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+hs-list li {
+    padding: 8px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border3);
+    border-radius: var(--radius);
+}
+
+hs-table > table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+hs-table th,
+hs-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border3);
+    text-align: left;
+}
+hs-table th {
+    color: var(--text3);
+    font-weight: 500;
+    letter-spacing: 0.04em;
+}
+
+hs-upload > label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: var(--radius);
+    border: 1px dashed var(--border2);
+    background: var(--bg);
+    cursor: pointer;
+    color: var(--text2);
+}
+hs-upload > label:hover {
+    background: var(--bg2);
+}
+hs-upload input[type="file"] {
+    display: none;
+}
+
+hs-empty {
+    display: block;
+    text-align: center;
+    padding: 40px 16px;
+    color: var(--text3);
+    font-size: 12px;
+}

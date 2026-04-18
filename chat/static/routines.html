@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Local AI · Routines</title>
+        <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+        <link rel="stylesheet" href="/static/css/shared.css" />
+        <link rel="stylesheet" href="/static/css/routines.css" />
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js"></script>
+        <script type="module" src="/static/js/nav.js"></script>
+    </head>
+    <body>
+        <header>
+            <a class="header-brand" href="/">
+                <div class="brand-dot" id="brand-dot"></div>
+                <span class="brand-name">local ai</span>
+            </a>
+            <nav data-shared-nav></nav>
+        </header>
+
+        <main>
+            <div class="routines-header">
+                <h1 class="routines-title">Routines</h1>
+                <button class="btn-primary" onclick="openModal()">+ New Routine</button>
+            </div>
+
+            <div id="routines-list" class="routines-list">
+                <div class="empty-state">No routines yet. Create one to get started.</div>
+            </div>
+        </main>
+
+        <!-- Create/Edit Modal -->
+        <div class="modal-backdrop" id="modal-backdrop" onclick="closeModal()"></div>
+        <div class="modal" id="modal">
+            <div class="modal-header">
+                <span class="modal-title" id="modal-title">New Routine</span>
+                <button class="modal-close" onclick="closeModal()">✕</button>
+            </div>
+            <form class="modal-body" onsubmit="saveRoutine(event)">
+                <label class="field-label">Name</label>
+                <input class="field-input" id="f-name" type="text" placeholder="Morning briefing" required />
+
+                <label class="field-label">Schedule <span class="field-hint">(cron expression · UTC)</span></label>
+                <div class="schedule-row">
+                    <input class="field-input" id="f-schedule" type="text" placeholder="0 8 * * *" required />
+                    <select class="schedule-preset" onchange="applyPreset(this)">
+                        <option value="">presets…</option>
+                        <option value="0 8 * * *">Every day at 8 AM</option>
+                        <option value="0 8 * * 1">Every Monday at 8 AM</option>
+                        <option value="0 9 * * 1-5">Weekdays at 9 AM</option>
+                        <option value="0 */4 * * *">Every 4 hours</option>
+                        <option value="0 * * * *">Every hour</option>
+                        <option value="*/15 * * * *">Every 15 minutes</option>
+                    </select>
+                </div>
+                <div class="schedule-human" id="schedule-human"></div>
+
+                <label class="field-label">Prompt</label>
+                <textarea class="field-input field-textarea" id="f-prompt" placeholder="Summarise important AI news and write it to /workspace/notes/daily-briefing.md" required></textarea>
+
+                <label class="field-label toggle-row">
+                    <input type="checkbox" id="f-enabled" checked />
+                    <span>Enabled</span>
+                </label>
+
+                <div class="modal-actions">
+                    <button type="button" class="btn-ghost" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn-primary" id="save-btn">Save</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Run history panel (slide-in from right) -->
+        <div class="panel-backdrop" id="panel-backdrop" onclick="closePanel()"></div>
+        <div class="panel" id="panel">
+            <div class="panel-header">
+                <span class="panel-title" id="panel-title">Run history</span>
+                <button class="modal-close" onclick="closePanel()">✕</button>
+            </div>
+            <div class="panel-body" id="panel-body">
+                <div class="empty-state">No runs yet.</div>
+            </div>
+        </div>
+
+        <script src="/static/js/shared.js"></script>
+        <script src="/static/js/routines.js"></script>
+    </body>
+</html>

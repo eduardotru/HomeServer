@@ -16,6 +16,7 @@
         <link rel="stylesheet" href="/static/css/chat.css" />
         <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js"></script>
+        <script type="module" src="/static/js/nav.js"></script>
     </head>
     <body>
         <div id="app">
@@ -33,51 +34,7 @@
                         "
                     ></span>
                 </div>
-                <nav
-                    style="
-                        display: flex;
-                        align-items: center;
-                        gap: 2px;
-                        margin-left: 8px;
-                    "
-                >
-                    <a
-                        href="/"
-                        style="
-                            font-size: 11px;
-                            color: var(--accent);
-                            background: var(--accent-lt);
-                            text-decoration: none;
-                            padding: 4px 10px;
-                            border-radius: 5px;
-                            letter-spacing: 0.04em;
-                        "
-                        >chat</a
-                    >
-                    <a
-                        href="/search"
-                        style="
-                            font-size: 11px;
-                            color: var(--text3);
-                            text-decoration: none;
-                            padding: 4px 10px;
-                            border-radius: 5px;
-                            letter-spacing: 0.04em;
-                            transition:
-                                background 0.15s,
-                                color 0.15s;
-                        "
-                        onmouseover="
-                            this.style.background = 'var(--bg2)';
-                            this.style.color = 'var(--text)';
-                        "
-                        onmouseout="
-                            this.style.background = '';
-                            this.style.color = 'var(--text3)';
-                        "
-                        >search</a
-                    >
-                </nav>
+                <nav data-shared-nav></nav>
 
                 <div class="conv-area">
                     <button id="conv-btn" onclick="toggleDropdown()">
@@ -133,7 +90,7 @@
                 <div class="input-box">
                     <textarea
                         id="input"
-                        placeholder="Message..."
+                        placeholder="Ask me anything…"
                         rows="1"
                         autofocus
                     ></textarea>
@@ -187,25 +144,14 @@
                     </p>
                     <div style="display: flex; align-items: center; gap: 12px">
                         <div
-                            class="agent-toggle"
+                            class="agent-toggle on"
                             id="always-allow-toggle"
                             onclick="toggleAlwaysAllow()"
-                            style="display: none"
                         >
-                            <div class="toggle-track" id="always-allow-track">
+                            <div class="toggle-track on" id="always-allow-track">
                                 <div class="toggle-thumb"></div>
                             </div>
                             <span class="agent-label">always allow</span>
-                        </div>
-                        <div
-                            class="agent-toggle"
-                            id="agent-toggle"
-                            onclick="toggleAgent()"
-                        >
-                            <div class="toggle-track" id="toggle-track">
-                                <div class="toggle-thumb"></div>
-                            </div>
-                            <span class="agent-label">agent mode</span>
                         </div>
                     </div>
                 </div>

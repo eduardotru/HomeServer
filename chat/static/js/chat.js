@@ -14,8 +14,7 @@ const stopBtn = document.getElementById("stop-btn");
 let isGenerating = false;
 let currentConvId = null;
 let conversations = [];
-let agentMode = false;
-let alwaysAllow = false;
+let alwaysAllow = true;
 let abortController = null;
 
 // ── Init ────────────────────────────────────────────────────
@@ -24,6 +23,22 @@ loadModelStatus();
 
 // Poll model status every 10s so the UI reflects swaps
 setInterval(loadModelStatus, 10000);
+
+// Load conversation from URL on direct navigation (e.g. /chat/{uuid})
+(function () {
+    const m = location.pathname.match(/^\/chat\/([0-9a-f-]{36})$/i);
+    if (m) loadConversation(m[1], false);
+})();
+
+// Handle browser back / forward
+window.addEventListener("popstate", () => {
+    const m = location.pathname.match(/^\/chat\/([0-9a-f-]{36})$/i);
+    if (m) {
+        loadConversation(m[1], false);
+    } else {
+        newConversation(false);
+    }
+});
 
 async function loadModelStatus() {
     try {
@@ -72,45 +87,7 @@ function fillPrompt(el) {
     inputEl.focus();
 }
 
-// ── Agent mode ──────────────────────────────────────────────
-function toggleAgent() {
-    agentMode = !agentMode;
-    document
-        .getElementById("agent-toggle")
-        .classList.toggle("on", agentMode);
-    document
-        .getElementById("toggle-track")
-        .classList.toggle("on", agentMode);
-    inputEl.placeholder = agentMode
-        ? "Ask me to do something with the codebase..."
-        : "Message...";
-
-    // Show/hide always-allow toggle alongside agent mode
-    const alwaysAllowEl = document.getElementById(
-        "always-allow-toggle",
-    );
-    alwaysAllowEl.style.display = agentMode ? "flex" : "none";
-
-    // Reset always-allow when agent mode is turned off
-    if (!agentMode && alwaysAllow) {
-        alwaysAllow = false;
-        document
-            .getElementById("always-allow-toggle")
-            .classList.remove("on");
-        document
-            .getElementById("always-allow-track")
-            .classList.remove("on");
-    }
-
-    // Update model tag — agent mode uses coder, regular uses main
-    const modelTag = document.getElementById("model-tag");
-    if (modelTag) {
-        modelTag.textContent = agentMode
-            ? "gpt-oss-20b"
-            : "qwen3-8b";
-    }
-}
-
+// ── Always-allow toggle ─────────────────────────────────────
 function toggleAlwaysAllow() {
     alwaysAllow = !alwaysAllow;
     document
@@ -353,12 +330,51 @@ async function runAgentLoop(res, initBubble, initCursor) {
                 }
 
                 switch (ev.e) {
-                    case "text":
-                        // Full buffered text for this LLM turn — render as markdown
-                        cursor.remove();
-                        renderAssistantContent(bubble, ev.d);
+                    case "thinking_start":
+                        // Start of a <think> block — render it live in the bubble
+                        bubble.appendChild(renderThinkBlock("", false));
                         scrollToBottom();
                         break;
+
+                    case "thinking": {
+                        // Streamed chunk of thinking content
+                        const body = bubble.querySelector(".think-body");
+                        if (body) body.textContent += ev.d;
+                        scrollToBottom();
+                        break;
+                    }
+
+                    case "thinking_end": {
+                        // <think> block finished — mark as done
+                        const block = bubble.querySelector(".think-block");
+                        if (block) {
+                            block.querySelector(".think-dot")?.classList.add("done");
+                            const lbl = block.querySelector(".think-label");
+                            if (lbl) lbl.textContent = "thought for a moment";
+                        }
+                        scrollToBottom();
+                        break;
+                    }
+
+                    case "text": {
+                        // Full buffered text for this LLM turn — render as markdown.
+                        // If thinking was already streamed into this bubble, preserve it
+                        // and only append the response text.
+                        cursor.remove();
+                        const existingThink = bubble.querySelector(".think-block");
+                        if (existingThink) {
+                            if (ev.d.trim()) {
+                                const content = document.createElement("div");
+                                content.innerHTML = marked.parse(ev.d);
+                                content.querySelectorAll("pre code").forEach(el => hljs.highlightElement(el));
+                                bubble.appendChild(content);
+                            }
+                        } else {
+                            renderAssistantContent(bubble, ev.d);
+                        }
+                        scrollToBottom();
+                        break;
+                    }
 
                     case "tool_start": {
                         const td = ev.d;
@@ -400,9 +416,15 @@ async function runAgentLoop(res, initBubble, initCursor) {
                         if (!bubble.innerHTML.trim()) {
                             bubble.closest(".message")?.remove();
                         }
-                        if (!currentConvId && ev.d.conv_id) {
-                            currentConvId = ev.d.conv_id;
-                            convTitleEl.textContent = "New conversation";
+                        if (ev.d.conv_id) {
+                            if (!currentConvId) {
+                                currentConvId = ev.d.conv_id;
+                                history.replaceState(
+                                    { convId: ev.d.conv_id },
+                                    "",
+                                    `/chat/${ev.d.conv_id}`,
+                                );
+                            }
                             loadConversations();
                         }
                         break loop;
@@ -477,26 +499,56 @@ function renderConvList() {
     convList.innerHTML = conversations
         .map(
             (c) => `
-      <div class="conv-item ${c.id === currentConvId ? "active" : ""}"
-           onclick="loadConversation('${c.id}', ${JSON.stringify(c.title).replace(/"/g, "&quot;")})">
+      <a class="conv-item ${c.id === currentConvId ? "active" : ""}"
+         href="/chat/${c.id}"
+         data-id="${c.id}">
         <span class="conv-item-title">${escHtml(c.title)}</span>
         <span class="conv-item-date">${formatDate(c.created_at)}</span>
-        <button class="conv-delete" onclick="deleteConversation(event, '${c.id}')" title="Delete">✕</button>
-      </div>
+        <button class="conv-delete" data-delete-id="${c.id}" title="Delete">✕</button>
+      </a>
     `,
         )
         .join("");
+
+    convList.querySelectorAll("a.conv-item").forEach((el) => {
+        el.addEventListener("click", (e) => {
+            const delBtn = e.target.closest(".conv-delete");
+            if (delBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                deleteConversation(e, delBtn.dataset.deleteId);
+                return;
+            }
+            e.preventDefault();
+            loadConversation(el.dataset.id);
+        });
+    });
 }
 
-async function loadConversation(id, title) {
+async function loadConversation(id, pushHistory = true) {
     closeDropdown();
     currentConvId = id;
-    convTitleEl.textContent = title;
+    if (pushHistory) history.pushState({ convId: id }, "", `/chat/${id}`);
+
+    const cached = conversations.find((c) => c.id === id);
+    convTitleEl.textContent = cached?.title || "…";
+
     messagesEl.innerHTML = "";
-    const res = await fetch(`/conversations/${id}/messages`);
-    const msgs = await res.json();
-    msgs.forEach((m) => addMessage(m.role, m.content));
-    renderConvList();
+    document.getElementById("empty-state")?.remove();
+
+    try {
+        const res = await fetch(`/conversations/${id}/messages`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const msgs = await res.json();
+        replayMessages(msgs);
+        scrollToBottom(true);
+    } catch (e) {
+        addMessage("assistant", `Error loading conversation: ${e.message}`);
+    }
+
+    await loadConversations();
+    const fresh = conversations.find((c) => c.id === id);
+    if (fresh) convTitleEl.textContent = fresh.title;
     inputEl.focus();
 }
 
@@ -507,13 +559,67 @@ async function deleteConversation(e, id) {
     await loadConversations();
 }
 
-function newConversation() {
+function newConversation(pushHistory = true) {
     closeDropdown();
+    if (pushHistory) history.pushState(null, "", "/");
     currentConvId = null;
     convTitleEl.textContent = "New conversation";
     messagesEl.innerHTML = "";
     messagesEl.appendChild(emptyStateEl());
     inputEl.focus();
+}
+
+// ── Replay stored messages into the DOM ─────────────────────
+// Structured rows: kind in {user, assistant, tool_call, tool_result}.
+// tool_call adds a tool card; the following tool_result fills it in.
+function replayMessages(msgs) {
+    let pendingCard = null;
+    msgs.forEach((m) => {
+        const kind = m.kind || m.role;
+        const meta = m.metadata || {};
+        switch (kind) {
+            case "user":
+                pendingCard = null;
+                addMessage("user", m.content || "");
+                break;
+            case "assistant":
+                pendingCard = null;
+                if ((m.content || "").trim()) addMessage("assistant", m.content);
+                break;
+            case "tool_call": {
+                pendingCard = renderToolCard({
+                    tool: meta.tool || "tool",
+                    args: meta.args || {},
+                    reason: meta.reason || "",
+                    destructive: !!meta.destructive,
+                    token: null, // historical — no live confirmation
+                });
+                messagesEl.appendChild(pendingCard);
+                break;
+            }
+            case "tool_result": {
+                let card = pendingCard?.querySelector(".tool-card");
+                if (!card) {
+                    // Orphan (legacy pre-migration row or missing tool_call) —
+                    // render a minimal card so the result still has a home.
+                    const wrapper = renderToolCard({
+                        tool: meta.tool || "tool",
+                        args: {},
+                        reason: "",
+                        token: null,
+                    });
+                    messagesEl.appendChild(wrapper);
+                    card = wrapper.querySelector(".tool-card");
+                }
+                showToolResult(card, meta);
+                pendingCard = null;
+                break;
+            }
+            default:
+                // Unknown kind — fall back to plain text so we never drop content.
+                if ((m.content || "").trim()) addMessage(m.role || "assistant", m.content);
+        }
+    });
 }
 
 function emptyStateEl() {
@@ -541,19 +647,6 @@ function parseThinkBlock(text) {
     };
 }
 
-function renderThinkBlock(thinking, done = true) {
-    const block = document.createElement("div");
-    block.className = "think-block";
-    block.innerHTML = `
-      <div class="think-header" onclick="this.closest('.think-block').classList.toggle('collapsed')">
-        <div class="think-dot ${done ? "done" : ""}"></div>
-        <span class="think-label">${done ? "thought for a moment" : "thinking…"}</span>
-        <span class="think-chevron">▾</span>
-      </div>
-      <div class="think-body">${escHtml(thinking)}</div>
-    `;
-    return block;
-}
 
 function renderAssistantContent(bubble, text) {
     const { thinking, response } = parseThinkBlock(text);
@@ -626,99 +719,32 @@ async function sendMessage() {
 
     abortController = new AbortController();
 
-    // ── Agent mode: use the server-side /agent loop ──────────
-    if (agentMode) {
-        try {
-            const res = await fetch("/agent", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    prompt,
-                    conversation_id: currentConvId,
-                    always_allow: alwaysAllow,
-                }),
-                signal: abortController.signal,
-            });
-            if (!res.ok) throw new Error(`Error ${res.status}`);
-            await runAgentLoop(res, bubble, cursor);
-        } catch (err) {
-            cursor.remove();
-            if (err.name === "AbortError") {
-                if (!bubble.innerHTML.trim())
-                    bubble.closest(".message")?.remove();
-            } else {
-                bubble.textContent = `Error: ${err.message}`;
-                bubble.style.color = "var(--red)";
-                bubble.style.borderColor = "var(--red)";
-            }
-            abortController = null;
-            setGenerating(false);
-            setStatus("ready");
-            inputEl.focus();
-        }
-        return;
-    }
-
-    // ── Normal chat mode ─────────────────────────────────────
     try {
-        const res = await fetch("/chat", {
+        const timeoutSignal = AbortSignal.timeout
+            ? AbortSignal.timeout(600_000)
+            : null;
+        const signal = timeoutSignal
+            ? AbortSignal.any
+                ? AbortSignal.any([abortController.signal, timeoutSignal])
+                : abortController.signal
+            : abortController.signal;
+        const res = await fetch("/agent", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 prompt,
                 conversation_id: currentConvId,
-                agent_mode: false,
+                always_allow: alwaysAllow,
             }),
-            signal: abortController.signal,
+            signal,
         });
-
         if (!res.ok) throw new Error(`Error ${res.status}`);
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let text = "";
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            text += decoder.decode(value, { stream: true });
-
-            // Extract conversation ID trailer
-            const marker = "__CONV_ID__",
-                end = "__END__";
-            if (text.includes(marker)) {
-                const idx = text.indexOf(marker),
-                    eIdx = text.indexOf(end);
-                if (eIdx !== -1) {
-                    const newId = text.slice(
-                        idx + marker.length,
-                        eIdx,
-                    );
-                    if (!currentConvId) {
-                        currentConvId = newId;
-                        convTitleEl.textContent =
-                            "New conversation";
-                        loadConversations();
-                    }
-                    text = text.slice(0, idx);
-                }
-            }
-
-            renderStreamingBubble(bubble, cursor, text);
-            scrollToBottom(true);
-        }
-
-        cursor.remove();
-        renderAssistantContent(bubble, text);
+        await runAgentLoop(res, bubble, cursor);
     } catch (err) {
         cursor.remove();
         if (err.name === "AbortError") {
-            // Stopped by user — keep whatever was streamed
-            if (bubble.textContent.trim()) {
-                renderAssistantContent(bubble, bubble.textContent);
-            } else {
+            if (!bubble.innerHTML.trim())
                 bubble.closest(".message")?.remove();
-            }
         } else {
             bubble.textContent = `Error: ${err.message}`;
             bubble.style.color = "var(--red)";
