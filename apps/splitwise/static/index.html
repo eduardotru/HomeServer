@@ -31,8 +31,8 @@
                     <hs-field label="Description">
                         <hs-input name="description" placeholder="e.g. Dinner" required></hs-input>
                     </hs-field>
-                    <hs-field label="Amount (cents)">
-                        <hs-input name="amount_cents" type="number" min="1" required></hs-input>
+                    <hs-field label="Amount (€)">
+                        <hs-input name="amount" type="number" step="0.01" min="0.01" placeholder="e.g. 12.50" required></hs-input>
                     </hs-field>
                     <hs-field label="Paid by">
                         <select name="payer_id" id="payer-select" required></select>
@@ -55,6 +55,12 @@
                 <div id="debts" class="debts">
                     <small class="muted">No debts yet.</small>
                 </div>
+            </hs-card>
+
+            <hs-card>
+                <h1 slot="title">Settlements</h1>
+                <small class="muted">Payments recorded between friends reduce outstanding debt.</small>
+                <hs-list id="settlements"></hs-list>
             </hs-card>
 
             <hs-card>

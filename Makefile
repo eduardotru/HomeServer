@@ -241,7 +241,6 @@ files:
 		-p $(FILES_PORT):$(FILES_PORT) \
 		-e FILES_PORT=$(FILES_PORT) \
 		-e FILES_ROOT=$(FILES_ROOT) \
-		-e FILES_ENCRYPTION_KEY=$(FILES_ENCRYPTION_KEY) \
 		-v $(CURDIR)/data/files:/data/files \
 		local/files > logs/files.cid
 	@echo "  Files container ID: $$(cat logs/files.cid)"

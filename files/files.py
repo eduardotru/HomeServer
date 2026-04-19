@@ -1,14 +1,10 @@
-import asyncio
-import base64
-import hmac as hmac_lib
-import json
 import mimetypes
 import os
+import shutil
 from pathlib import Path
 from typing import Optional
 
 import uvicorn
-from cryptography.fernet import Fernet, InvalidToken
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Response
 
@@ -16,71 +12,27 @@ load_dotenv()
 
 FILES_PORT = int(os.getenv("FILES_PORT", 9000))
 FILES_ROOT = Path(os.getenv("FILES_ROOT") or "/data/files")
-
-_raw_key = os.getenv("FILES_ENCRYPTION_KEY")
-if not _raw_key:
-    raise RuntimeError("FILES_ENCRYPTION_KEY is required but not set")
-
-try:
-    FERNET = Fernet(_raw_key.encode())
-    HMAC_KEY = base64.urlsafe_b64decode(_raw_key.encode())  # 32 raw bytes
-except Exception as e:
-    raise RuntimeError(f"Invalid FILES_ENCRYPTION_KEY: {e}")
-
-INDEX_PATH = FILES_ROOT / ".index"
 MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", 100 * 1024 * 1024))  # 100 MB default
-
-# Serialises all index read-modify-write operations to prevent race conditions.
-_index_lock = asyncio.Lock()
 
 app = FastAPI()
 
 
-# ---------------------------------------------------------------------------
-# Crypto helpers
-# ---------------------------------------------------------------------------
+def _resolve(path: str) -> Path:
+    """Validate a logical path and map it to an absolute disk path under FILES_ROOT.
 
-def encrypt_bytes(data: bytes) -> bytes:
-    return FERNET.encrypt(data)
-
-
-def decrypt_bytes(data: bytes) -> bytes:
-    try:
-        return FERNET.decrypt(data)
-    except InvalidToken:
-        raise HTTPException(status_code=500, detail="Decryption failed: corrupt data or wrong key")
-
-
-def logical_to_disk(logical_path: str) -> str:
-    """Deterministic HMAC-SHA256(key, path) → 64-char hex filename."""
-    return hmac_lib.new(HMAC_KEY, logical_path.encode(), "sha256").hexdigest()
-
-
-def load_index() -> dict:
-    """Returns {logical_path: {"disk": hex, "size": int, "modified": float}}"""
-    if not INDEX_PATH.exists():
-        return {}
-    return json.loads(decrypt_bytes(INDEX_PATH.read_bytes()).decode())
-
-
-def save_index(index: dict) -> None:
-    """Atomic write via temp file + rename."""
-    tmp = INDEX_PATH.with_suffix(".tmp")
-    tmp.write_bytes(encrypt_bytes(json.dumps(index).encode()))
-    tmp.rename(INDEX_PATH)
-
-
-def validate_path(path: str) -> str:
-    """Normalize path, reject traversal attempts."""
+    Rejects `..` traversal, empty segments, and absolute paths. The returned
+    Path may not exist yet — callers decide based on operation.
+    """
     parts = [p for p in path.split("/") if p and p not in (".", "..")]
     if not parts:
         raise HTTPException(status_code=400, detail="Invalid path")
-    return "/".join(parts)
+    resolved = (FILES_ROOT / "/".join(parts)).resolve()
+    # Extra defense: resolved path must remain under FILES_ROOT.
+    root = FILES_ROOT.resolve()
+    if root not in resolved.parents and resolved != root:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    return resolved
 
-
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
 
 @app.get("/health")
 def health():
@@ -90,43 +42,41 @@ def health():
 @app.get("/files")
 @app.get("/files/{prefix:path}")
 def list_directory(prefix: str = ""):
-    prefix_clean = prefix.rstrip("/") if prefix else ""
-    index = load_index()
-    seen: dict[str, dict] = {}
-    for logical_path, meta in index.items():
-        if prefix_clean:
-            if not logical_path.startswith(prefix_clean + "/"):
-                continue
-            relative = logical_path[len(prefix_clean) + 1:]
-        else:
-            relative = logical_path
-        parts = relative.split("/")
-        name = parts[0]
-        if name not in seen:
-            if len(parts) == 1:
-                seen[name] = {
-                    "name": name,
-                    "type": "file",
-                    "size": meta["size"],
-                    "modified": meta["modified"],
-                }
-            else:
-                seen[name] = {"name": name, "type": "directory", "size": None, "modified": None}
-    entries = sorted(seen.values(), key=lambda e: e["name"])
-    return {"path": prefix_clean, "entries": entries}
+    target = FILES_ROOT if not prefix else _resolve(prefix)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Path not found")
+    if not target.is_dir():
+        raise HTTPException(status_code=400, detail="Not a directory")
+    entries = []
+    for child in sorted(target.iterdir(), key=lambda p: p.name):
+        st = child.stat()
+        if child.is_file():
+            entries.append({
+                "name": child.name,
+                "type": "file",
+                "size": st.st_size,
+                "modified": st.st_mtime,
+            })
+        elif child.is_dir():
+            entries.append({
+                "name": child.name,
+                "type": "directory",
+                "size": None,
+                "modified": None,
+            })
+    return {"path": prefix.rstrip("/"), "entries": entries}
 
 
 @app.head("/file/{path:path}")
 def file_metadata(path: str, response: Response):
-    path = validate_path(path)
-    index = load_index()
-    if path not in index:
+    disk = _resolve(path)
+    if not disk.is_file():
         raise HTTPException(status_code=404, detail="File not found")
-    meta = index[path]
+    st = disk.stat()
     mime, _ = mimetypes.guess_type(path)
-    response.headers["Content-Length"] = str(meta["size"])
+    response.headers["Content-Length"] = str(st.st_size)
     response.headers["Content-Type"] = mime or "application/octet-stream"
-    response.headers["Last-Modified"] = str(meta["modified"])
+    response.headers["Last-Modified"] = str(st.st_mtime)
 
 
 @app.get("/file/{path:path}")
@@ -136,18 +86,15 @@ async def read_file(
     offset: Optional[int] = None,
     length: Optional[int] = None,
 ):
-    path = validate_path(path)
-    index = load_index()
-    if path not in index:
+    disk = _resolve(path)
+    if not disk.is_file():
         raise HTTPException(status_code=404, detail="File not found")
 
-    raw = (FILES_ROOT / index[path]["disk"]).read_bytes()
-    data = decrypt_bytes(raw) if raw else b""
+    data = disk.read_bytes()
     file_size = len(data)
     mime, _ = mimetypes.guess_type(path)
     content_type = mime or "application/octet-stream"
 
-    # HTTP Range header
     range_header = request.headers.get("Range")
     if range_header:
         try:
@@ -170,7 +117,6 @@ async def read_file(
             },
         )
 
-    # Query param byte range
     if offset is not None or length is not None:
         start = offset or 0
         end = (start + length - 1) if length is not None else (file_size - 1)
@@ -195,60 +141,47 @@ async def read_file(
 
 @app.put("/file/{path:path}")
 async def write_file(path: str, request: Request):
-    path = validate_path(path)
+    disk = _resolve(path)
     body = await request.body()
     if len(body) > MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail=f"File too large (max {MAX_FILE_SIZE} bytes)")
-    disk_name = logical_to_disk(path)
-    disk_path = FILES_ROOT / disk_name
-    async with _index_lock:
-        disk_path.write_bytes(encrypt_bytes(body))
-        index = load_index()
-        index[path] = {"disk": disk_name, "size": len(body), "modified": disk_path.stat().st_mtime}
-        save_index(index)
+    if disk.exists() and disk.is_dir():
+        raise HTTPException(status_code=400, detail="Path is a directory")
+    disk.parent.mkdir(parents=True, exist_ok=True)
+    disk.write_bytes(body)
     return {"path": path, "written": len(body)}
 
 
 @app.patch("/file/{path:path}")
 async def append_file(path: str, request: Request):
-    path = validate_path(path)
+    disk = _resolve(path)
     body = await request.body()
-    async with _index_lock:
-        disk_name = logical_to_disk(path)
-        disk_path = FILES_ROOT / disk_name
-        index = load_index()
-        existing = decrypt_bytes(disk_path.read_bytes()) if path in index else b""
-        combined = existing + body
-        if len(combined) > MAX_FILE_SIZE:
-            raise HTTPException(status_code=413, detail=f"File too large (max {MAX_FILE_SIZE} bytes)")
-        disk_path.write_bytes(encrypt_bytes(combined))
-        index[path] = {"disk": disk_name, "size": len(combined), "modified": disk_path.stat().st_mtime}
-        save_index(index)
+    if disk.exists() and disk.is_dir():
+        raise HTTPException(status_code=400, detail="Path is a directory")
+    existing_size = disk.stat().st_size if disk.is_file() else 0
+    if existing_size + len(body) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail=f"File too large (max {MAX_FILE_SIZE} bytes)")
+    disk.parent.mkdir(parents=True, exist_ok=True)
+    with disk.open("ab") as f:
+        f.write(body)
     return {"path": path, "appended": len(body)}
 
 
 @app.delete("/file/{path:path}")
 async def delete_path(path: str, recursive: bool = False):
-    path = validate_path(path)
-    async with _index_lock:
-        index = load_index()
-        if path in index:
-            (FILES_ROOT / index[path]["disk"]).unlink(missing_ok=True)
-            del index[path]
-            save_index(index)
+    disk = _resolve(path)
+    if disk.is_file():
+        disk.unlink()
+        return {"deleted": path}
+    if disk.is_dir():
+        if not any(disk.iterdir()):
+            disk.rmdir()
             return {"deleted": path}
-        # Virtual directory deletion
-        dir_prefix = path.rstrip("/") + "/"
-        children = [k for k in index if k.startswith(dir_prefix)]
-        if not children:
-            raise HTTPException(status_code=404, detail="Path not found")
         if not recursive:
             raise HTTPException(status_code=400, detail="Directory not empty. Use ?recursive=true")
-        for child in children:
-            (FILES_ROOT / index[child]["disk"]).unlink(missing_ok=True)
-            del index[child]
-        save_index(index)
-    return {"deleted": path}
+        shutil.rmtree(disk)
+        return {"deleted": path}
+    raise HTTPException(status_code=404, detail="Path not found")
 
 
 if __name__ == "__main__":

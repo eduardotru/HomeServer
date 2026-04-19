@@ -1,6 +1,8 @@
-# HomeServer — Local AI Platform
+# HomeServer
 
-A self-hosted AI platform that runs entirely on your Mac. No cloud, no API keys, no data leaving your machine. Built on Apple Silicon with MLX for fast local inference.
+A local-first platform for running a small LLM on your Mac and building tiny web apps around it. Each app gets its own URL, its own SQL schema, and a chat sidebar scoped to its own API — so you can talk to the app, and the model can poke at the app, without ever leaving the box.
+
+Built for an Apple Silicon Mac, runs natively where it matters (MLX + Metal) and containerised where it doesn't.
 
 ---
 
@@ -8,212 +10,103 @@ A self-hosted AI platform that runs entirely on your Mac. No cloud, no API keys,
 
 ```
 HomeServer/
-├── llm/          — Inference server (native, Metal GPU)
-├── chat/         — Chat app + UI (container)
-├── code/         — Code execution sandbox (container)
-├── postgres/     — Database schema
-├── .env          — All ports and config
-├── Makefile      — Platform management
-└── data/
-    └── postgres/  — DB Volume
+├── llm/          — MLX inference server (native, Metal GPU)
+├── chat/         — Chat UI, agent loop, search, routines (container)
+├── ui/           — Shared web components used by chat + apps
+├── apps/         — Your small apps (see apps/README.md)
+├── code/         — Sandbox for the agent's shell / file tools (container)
+├── files/        — Plain file-store service (container)
+├── searxng/      — Self-hosted web search (container)
+├── postgres/     — Shared DB (container)
+├── Makefile      — Build / start / stop everything
+└── .env          — All ports, URLs, model choices
 ```
 
-### Services
+| Service | Port | Notes |
+|---|---|---|
+| LLM (MLX) | 8000 | Native. Switch between local and remote with `LLM_MODE`. |
+| Embed | 8010 | Native. Sentence embeddings for pgvector semantic recall. |
+| Chat | 8001 | Main UI + agent loop. Mounts all apps under `/apps/<name>`. |
+| Code | 8002 | Shell + file tools the agent uses. |
+| Search | 8003 | SearXNG wrapper the chat & agent can hit. |
+| SearXNG | 8080 | Metasearch engine. |
+| Files | 9000 | Plain REST file store under `data/files/`. |
+| Postgres | 5432 | `pgvector` + `pgcrypto`. One DB, one schema per app. |
 
-| Service | Type | Port | Description |
-|---|---|---|---|
-| LLM server | Native (macOS) | 8000 | MLX inference, Metal GPU, request queue |
-| Chat app | Container | 5000 | FastAPI + UI, conversation history |
-| Code container | Container | 6000 | Sandboxed code execution for agent mode |
-| Postgres | Container | 5432 | Conversation storage |
-
-The LLM server runs natively to get direct Metal GPU access. Everything else runs in Apple containers.
-
----
-
-## Requirements
-
-- Apple Silicon Mac (M1/M2/M3/M4)
-- macOS 26 (Tahoe) or later
-- Python 3.11+
-- [Apple container CLI](https://developer.apple.com/documentation/virtualization)
+The chat container owns `/`. Every folder in `apps/` gets auto-mounted at `/apps/<name>` on startup.
 
 ---
 
 ## Setup
 
-### 1. Clone and configure
-
 ```bash
-git clone <your-repo> HomeServer
-cd HomeServer
-cp .env.example .env   # edit ports/model if needed
+cp .env.example .env      # fill in an API key if you want remote LLM mode
+make setup                # one-time venv + model download bootstrap
+make start                # builds containers, starts everything, tails logs
 ```
 
-### 2. Install dependencies
+Open <http://localhost:8001>. First run pulls the MLX model (~3–5 GB depending on pick).
+
+Daily:
 
 ```bash
-make setup
+make start / stop / restart / status / logs
+make restart-chat         # rebuild chat only — fastest dev loop
+make restart-llm          # reload the model
+make dev                  # uvicorn --reload on the LLM server
 ```
 
-This creates the LLM server venv and installs all Python dependencies. The chat app and code container dependencies are handled automatically during `make start` via Docker.
-
-### 3. Start everything
-
-```bash
-make start
-```
-
-On first run, the LLM model (~4GB) is downloaded from HuggingFace automatically.
-
-Open **http://localhost:5000** in your browser.
+Config lives in `.env` — ports, `LLM_MODEL`, `LLM_MODE=local|remote`, remote provider (anthropic / openai-compatible) with base URL + API key.
 
 ---
 
-## Daily Usage
+## Apps
+
+An app is any folder in `apps/`. It ships its own:
+
+- `manifest.json` — name, icon, capabilities
+- `app.py` — a FastAPI `APIRouter` + a `setup(db_pool)` hook
+- `migrations/NNNN_*.sql` — run once, tracked per-app
+- `static/` — the UI, served at `/apps/<name>/`
+
+Chat picks them up on startup, applies new migrations, and each app gets:
+
+- Its own URL (`/apps/splitwise`)
+- Its own Postgres schema (`app_splitwise.*`) with a shared connection pool
+- A chat sidebar wired to the app's own API — the model has one tool, `app_call`, with GET/POST/DELETE scoped to `/apps/<name>/api/*`
+
+Scaffold one in ten seconds:
 
 ```bash
-make setup          # install dependencies (run once after cloning)
-make start          # start all services + tail logs
-make stop           # backup DB and stop everything
-make restart        # stop then start
-make status         # show what's running
-make logs           # re-attach to logs
+make new-app NAME=todos
+make restart-chat
 ```
 
-### Targeted restarts (faster iteration)
-
-```bash
-make restart-chat   # rebuild + restart chat app only (~10s)
-make restart-llm    # restart LLM server only (reloads model, ~30s)
-make restart-code   # rebuild + restart code container only
-make dev            # LLM server with --reload on file changes
-```
-
-### Database
-
-```bash
-make db-reset       # wipe all data and backups
-```
+Then edit `apps/todos/app.py` and go. A working reference lives in `apps/splitwise/` (friends, expenses, net-debt calculation, settle-up). More detail in [`apps/README.md`](apps/README.md).
 
 ---
 
-## Configuration
+## Agent mode
 
-All config lives in `.env`. Edit and restart the relevant service.
+Toggle agent mode in the chat input. The model gets tools for web search, file/code reading, file writes, shell commands, memory, and sub-agent delegation. Destructive tool calls (writes, `run_command`) require explicit confirmation in the UI the first time — subsequent calls within the conversation are remembered as approved.
 
-```bash
-# Switch models
-LLM_MODEL=mlx-community/Qwen3-8B-4bit
-# → make restart-llm
+Tool access is gated by prompt keywords (e.g. mentioning "routine" unlocks the routine tools) so the model isn't drowning in irrelevant schemas on every turn. Full picture: [`chat/chat.py`](chat/chat.py) — search `select_tools_for`.
 
-# Change ports
-CHAT_APP_PORT=8080
-# → make restart-chat
-
-# Tune the request queue
-MAX_QUEUE_SIZE=20
-# → make restart-llm
-```
-
-### Recommended models for 16GB RAM
-
-| Model | Size | Notes |
-|---|---|---|
-| `mlx-community/Qwen3-8B-4bit` | ~5GB | Best all-round, has thinking mode |
-| `mlx-community/Qwen2.5-Coder-7B-Instruct-4bit` | ~4.5GB | Best for code |
-| `mlx-community/Llama-3.1-8B-Instruct-4bit` | ~5GB | 128k context |
-| `mlx-community/Phi-4-4bit` | ~8GB | Strong reasoning |
+The agent can read most of the repo and write only inside specific allow-listed paths (apps/, chat/, etc.) in the code container. `.env`, `data/`, `.git/` are off-limits.
 
 ---
 
-## Agent Mode
+## Requirements
 
-Toggle **agent mode** in the chat UI (bottom right of input). The LLM gets access to tools that let it read and write files and run commands inside the code container.
-
-### What it can access
-
-| Path | Read | Write |
-|---|---|---|
-| `chat/`, `llm/`, `code/`, `postgres/` | ✅ | ✅ |
-| `Makefile`, other root files | ✅ | ❌ |
-| `.env`, `data/`, `logs/`, `.git/` | ❌ | ❌ |
-
-Destructive operations (writes, shell commands) require your explicit confirmation in the UI before they execute.
-
-### To allow writes to a new service directory
-
-Add it to `WRITE_ALLOWLIST` in `code/code.py` and run `make restart-code`.
-
----
-
-## Adding a New Service
-
-1. Create a directory: `mkdir my-service`
-2. Add it to `WRITE_ALLOWLIST` in `code/code.py`
-3. Add port entries to `.env`
-4. Add `build-X`, `X`, `stop-X` targets to `Makefile` following the existing pattern
-5. Run `make restart`
-
----
-
-## API
-
-### LLM server (port 8000)
-
-```bash
-# Generate (streaming)
-curl http://localhost:8000/generate \
-  -X POST -H "Content-Type: application/json" \
-  -d '{"prompt": "Hello", "stream": true}'
-
-# Generate with conversation history
-curl http://localhost:8000/generate \
-  -X POST -H "Content-Type: application/json" \
-  -d '{"messages": [{"role": "user", "content": "Hello"}], "stream": false}'
-
-# Queue status
-curl http://localhost:8000/queue
-```
-
-### Chat app (port 5000)
-
-```bash
-# Send a message
-curl http://localhost:5000/chat \
-  -X POST -H "Content-Type: application/json" \
-  -d '{"prompt": "Hello", "conversation_id": null}'
-
-# List conversations
-curl http://localhost:5000/conversations
-
-# Get messages for a conversation
-curl http://localhost:5000/conversations/<uuid>/messages
-
-# Execute a tool (agent mode)
-curl http://localhost:5000/tool \
-  -X POST -H "Content-Type: application/json" \
-  -d '{"tool": "list_directory", "args": {"path": "."}}'
-```
-
-Full interactive API docs at **http://localhost:5000/docs** and **http://localhost:8000/docs**.
+- Apple Silicon Mac (M1 or later), macOS 26 (Tahoe) or later
+- Python 3.11+
+- [Apple `container` CLI](https://developer.apple.com/documentation/virtualization)
 
 ---
 
 ## Troubleshooting
 
-**Segfault on LLM startup**
-The LLM server must be started with `python server.py` directly, not via `flask run` or `uvicorn` with a string module path. The Makefile handles this correctly. Avoid `--reload` in production.
-
-**Port already in use**
-```bash
-lsof -i :<port>
-kill $(lsof -t -i :<port>)
-```
-Note: macOS reserves port 5000 for AirPlay. Disable in System Settings → General → AirDrop & Handoff, or change `CHAT_APP_PORT` in `.env`.
-
-**Model too slow**
-Check that the LLM server is running natively (not in a container) and that Metal is active. The model should achieve ~30 tokens/sec on M-series chips.
-
-**Database not persisting**
-Run `make db-backup` before `make stop`. Backups are saved to `data/backups/` and restored automatically on next `make db`.
+- **Port 5000 / AirPlay** — macOS owns 5000. That's why `CHAT_APP_PORT=8001` by default. Fine to change.
+- **Model slow** — confirm the LLM server is running natively (not in a container) and Metal is active. Expect ~30 tok/s on M-series.
+- **Chat won't start** — it needs Postgres up first. `make db` then `make chat`, or just `make start`.
+- **Wipe everything** — `make db-reset` for Postgres, `rm -rf data/files` for the file store. No encryption, no backup dance.

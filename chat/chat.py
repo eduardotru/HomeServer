@@ -33,13 +33,6 @@ CODE_CONTAINER_URL = os.getenv("CODE_CONTAINER_URL", "http://localhost:6000")
 SEARXNG_URL = os.getenv("SEARXNG_URL", "http://localhost:8080")
 FILES_URL = os.getenv("FILES_URL", "http://localhost:9000")
 
-DB_ENCRYPTION_KEY = os.getenv("DB_ENCRYPTION_KEY")
-if not DB_ENCRYPTION_KEY:
-    raise RuntimeError(
-        "DB_ENCRYPTION_KEY is required but not set. "
-        "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
-    )
-
 # Compaction thresholds — tuned for Gemma 4 E4B (4B params, ~8k effective context).
 # 1 token ≈ 4 chars. Prompt budget: ~3k tokens for history so response has room.
 COMPACTION_CHAR_THRESHOLD = int(os.getenv("COMPACTION_CHAR_THRESHOLD", 12_000))
@@ -115,6 +108,15 @@ async def lifespan(app: FastAPI):
     )
     await db_pool.execute(
         "ALTER TABLE messages ADD COLUMN IF NOT EXISTS metadata JSONB"
+    )
+    # Bind a conversation to a specific app so the sidebar chat in app-wrapper
+    # has a single reusable thread per app and the LLM stays scoped.
+    await db_pool.execute(
+        "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS app TEXT"
+    )
+    await db_pool.execute(
+        "CREATE INDEX IF NOT EXISTS idx_conversations_app "
+        "ON conversations(app) WHERE app IS NOT NULL"
     )
     await db_pool.execute(
         "UPDATE messages SET kind = role WHERE kind IS NULL"
@@ -263,11 +265,10 @@ async def save_message(
     kind = kind or role
     msg_id = await db_pool.fetchval(
         "INSERT INTO messages (conversation_id, role, content, kind, metadata) "
-        "VALUES ($1, $2, armor(pgp_sym_encrypt($3, $4)), $5, $6) RETURNING id",
+        "VALUES ($1, $2, $3, $4, $5) RETURNING id",
         conv_id,
         role,
         content,
-        DB_ENCRYPTION_KEY,
         kind,
         metadata,
     )
@@ -283,9 +284,7 @@ async def _migrate_legacy_tool_results() -> None:
     """
     try:
         rows = await db_pool.fetch(
-            "SELECT id, pgp_sym_decrypt(dearmor(content), $1) AS content "
-            "FROM messages WHERE kind = 'user' AND metadata IS NULL",
-            DB_ENCRYPTION_KEY,
+            "SELECT id, content FROM messages WHERE kind = 'user' AND metadata IS NULL"
         )
     except Exception as e:
         print(f"[DB] legacy tool-result migration query failed: {e}")
@@ -352,19 +351,16 @@ async def build_context(conv_id: uuid.UUID) -> tuple[list[dict], Optional[str]]:
       3. Trigger background summarisation of dropped messages.
     """
     row = await db_pool.fetchrow(
-        "SELECT CASE WHEN summary IS NULL THEN NULL "
-        "ELSE pgp_sym_decrypt(dearmor(summary), $2) END AS summary "
-        "FROM conversations WHERE id = $1",
-        conv_id, DB_ENCRYPTION_KEY,
+        "SELECT summary FROM conversations WHERE id = $1",
+        conv_id,
     )
     summary = row["summary"] if row else None
 
     history = await db_pool.fetch(
-        "SELECT id, role, pgp_sym_decrypt(dearmor(content), $2) AS content "
-        "FROM messages WHERE conversation_id = $1 "
+        "SELECT id, role, content FROM messages WHERE conversation_id = $1 "
         "AND COALESCE(kind, role) IN ('user', 'assistant') "
         "ORDER BY created_at",
-        conv_id, DB_ENCRYPTION_KEY,
+        conv_id,
     )
     all_messages = [
         {"id": str(r["id"]), "role": r["role"], "content": r["content"]}
@@ -398,7 +394,7 @@ async def build_context(conv_id: uuid.UUID) -> tuple[list[dict], Optional[str]]:
                     recent_contents = {m["content"] for m in recent}
                     sim_rows = await db_pool.fetch(
                         """
-                        SELECT role, pgp_sym_decrypt(dearmor(content), $3) AS content
+                        SELECT role, content
                         FROM messages
                         WHERE conversation_id = $1
                           AND embedding IS NOT NULL
@@ -407,7 +403,6 @@ async def build_context(conv_id: uuid.UUID) -> tuple[list[dict], Optional[str]]:
                         """,
                         conv_id,
                         _emb_str(emb),
-                        DB_ENCRYPTION_KEY,
                     )
                     relevant = [
                         {"role": r["role"], "content": r["content"]}
@@ -458,10 +453,9 @@ async def update_summary(
             new_summary = res.json().get("response", "").strip()
             if new_summary:
                 await db_pool.execute(
-                    "UPDATE conversations SET summary = armor(pgp_sym_encrypt($1, $3)) WHERE id = $2",
+                    "UPDATE conversations SET summary = $1 WHERE id = $2",
                     new_summary,
                     conv_id,
-                    DB_ENCRYPTION_KEY,
                 )
                 print(f"[compaction] Summary updated for {conv_id}.")
     except Exception as e:
@@ -509,8 +503,8 @@ async def run_headless_agent(prompt: str) -> tuple[str, uuid.UUID]:
     """
     conv_id = uuid.uuid4()
     await db_pool.execute(
-        "INSERT INTO conversations (id, title) VALUES ($1, armor(pgp_sym_encrypt($2, $3)))",
-        conv_id, f"[Routine] {prompt[:60]}", DB_ENCRYPTION_KEY,
+        "INSERT INTO conversations (id, title) VALUES ($1, $2)",
+        conv_id, f"[Routine] {prompt[:60]}",
     )
     await save_message(conv_id, "user", prompt)
 
@@ -687,9 +681,8 @@ async def run_routine(routine_id: uuid.UUID) -> None:
     run_id = None
     try:
         row = await db_pool.fetchrow(
-            "SELECT pgp_sym_decrypt(dearmor(prompt), $2) AS prompt "
-            "FROM routines WHERE id = $1 AND enabled = true",
-            routine_id, DB_ENCRYPTION_KEY,
+            "SELECT prompt FROM routines WHERE id = $1 AND enabled = true",
+            routine_id,
         )
         if not row:
             print(f"[routine] {routine_id} not found or disabled — skipping.")
@@ -709,8 +702,8 @@ async def run_routine(routine_id: uuid.UUID) -> None:
 
         await db_pool.execute(
             "UPDATE routine_runs SET status='completed', finished_at=NOW(), "
-            "conversation_id=$2, output=armor(pgp_sym_encrypt($3, $4)) WHERE id=$1",
-            run_id, conv_id, output or "", DB_ENCRYPTION_KEY,
+            "conversation_id=$2, output=$3 WHERE id=$1",
+            run_id, conv_id, output or "",
         )
         await db_pool.execute("UPDATE routines SET last_run_at=NOW() WHERE id=$1", routine_id)
         print(f"[routine] {routine_id} completed.")
@@ -721,8 +714,8 @@ async def run_routine(routine_id: uuid.UUID) -> None:
             try:
                 await db_pool.execute(
                     "UPDATE routine_runs SET status='failed', finished_at=NOW(), "
-                    "error=armor(pgp_sym_encrypt($2, $3)) WHERE id=$1",
-                    run_id, str(e), DB_ENCRYPTION_KEY,
+                    "error=$2 WHERE id=$1",
+                    run_id, str(e),
                 )
             except Exception:
                 pass
@@ -752,6 +745,7 @@ GEMMA_TOOLS = [
     {"type": "function", "function": {"name": "memory_list", "description": "List keys in shared agent memory, optionally filtered by prefix.", "parameters": {"type": "object", "properties": {"prefix": {"type": "string", "description": "Key prefix filter (e.g. research/)"}}, "required": []}}},
     {"type": "function", "function": {"name": "delegate", "description": "Spawn a sub-agent with its own context to handle a task. The sub-agent has access to all tools and shared memory. Returns a summary of what it accomplished.", "parameters": {"type": "object", "properties": {"task": {"type": "string", "description": "Clear description of what the sub-agent should do"}, "context": {"type": "string", "description": "Background info the sub-agent needs (it cannot see your conversation)"}}, "required": ["task"]}}},
     {"type": "function", "function": {"name": "new_app", "description": "Scaffold a new app from apps/_template under apps/<name>/. Creates manifest.json, app.py, migrations/, static/ with the template name substituted. After this, edit the files to build the app, then ask the user to run `make restart-chat`.", "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "App name. Must match [a-z][a-z0-9_-]* — e.g. 'splitwise', 'fitness', 'trips'."}}, "required": ["name"]}}},
+    {"type": "function", "function": {"name": "app_call", "description": "Call the current app's own API. Only available when chatting inside an app sidebar. Use GET to read data, POST to create, DELETE to remove.", "parameters": {"type": "object", "properties": {"method": {"type": "string", "enum": ["GET", "POST", "DELETE"], "description": "HTTP method"}, "path": {"type": "string", "description": "Path under the app's /api/ — e.g. '/friends' or '/expenses/abc123'. The leading slash is optional."}, "body": {"type": "object", "description": "JSON body for POST requests"}}, "required": ["method", "path"]}}},
 ]
 
 # Sub-agent tool set — same as main but without delegate (no recursive spawning)
@@ -818,6 +812,27 @@ def select_tools_for(message: str, *, allow_delegate: bool = True) -> list[dict]
 
     pool = GEMMA_TOOLS if allow_delegate else SUB_AGENT_TOOLS
     return [t for t in pool if t["function"]["name"] in chosen]
+
+
+async def select_tools_for_conversation(
+    conv_id: uuid.UUID, *, allow_delegate: bool = True
+) -> list[dict]:
+    """Sticky version of select_tools_for: ORs hints across every user turn.
+
+    Follow-ups like "go ahead" or "implement it" don't mention the original
+    task's keywords, so a per-message regex would drop the write/apps tools
+    the opener earned. Concatenate all user messages in the conversation
+    (the just-saved current turn is included) and let the keyword scan run
+    over the blob — once a group is granted, it stays granted.
+    """
+    rows = await db_pool.fetch(
+        "SELECT content FROM messages WHERE conversation_id = $1 AND role = 'user' "
+        "ORDER BY created_at",
+        conv_id,
+    )
+    blob = "\n".join(r["content"] for r in rows if r["content"])
+    return select_tools_for(blob, allow_delegate=allow_delegate)
+
 
 # Tools that modify state — require user confirmation unless always_allow is set
 DESTRUCTIVE_TOOLS = {
@@ -1064,16 +1079,51 @@ TOOL_ROUTES = {
 }
 
 
-async def execute_tool(tool: str, args: dict, agent_name: str = "main") -> dict:
-    """Route a tool call to the appropriate service."""
+async def execute_tool(
+    tool: str, args: dict, agent_name: str = "main", bound_app: Optional[str] = None
+) -> dict:
+    """Route a tool call to the appropriate service.
+
+    `bound_app` is set for app-scoped conversations (sidebar chat inside an
+    app). It locks `app_call` to that specific app so the LLM can't break
+    out of scope by passing another app's name.
+    """
+    if tool == "app_call":
+        if not bound_app:
+            raise ValueError("app_call is only available inside an app chat")
+        method = (args.get("method") or "GET").upper()
+        if method not in {"GET", "POST", "DELETE"}:
+            raise ValueError(f"Unsupported method: {method}")
+        path = (args.get("path") or "").lstrip("/")
+        if path.startswith("api/"):
+            path = path[len("api/"):]
+        url = f"http://localhost:{CHAT_APP_PORT}/apps/{bound_app}/api/{path}"
+        body = args.get("body") if method == "POST" else None
+        async with httpx.AsyncClient(timeout=15) as client:
+            if method == "GET":
+                res = await client.get(url)
+            elif method == "POST":
+                res = await client.post(url, json=body or {})
+            else:
+                res = await client.delete(url)
+        if res.status_code >= 400:
+            return {
+                "ok": False,
+                "status": res.status_code,
+                "error": res.text[:400],
+            }
+        try:
+            return {"ok": True, "status": res.status_code, "result": res.json()}
+        except ValueError:
+            return {"ok": True, "status": res.status_code, "result": res.text}
+
 
     # --- Shared agent memory --------------------------------------------------
     if tool == "memory_read":
         key = args["key"]
         row = await db_pool.fetchrow(
-            "SELECT pgp_sym_decrypt(dearmor(value), $2) AS value, agent, updated_at "
-            "FROM agent_memory WHERE key = $1",
-            key, DB_ENCRYPTION_KEY,
+            "SELECT value, agent, updated_at FROM agent_memory WHERE key = $1",
+            key,
         )
         if not row:
             return {"key": key, "found": False}
@@ -1085,10 +1135,10 @@ async def execute_tool(tool: str, args: dict, agent_name: str = "main") -> dict:
         value = args["value"]
         await db_pool.execute(
             "INSERT INTO agent_memory (key, value, agent) "
-            "VALUES ($1, armor(pgp_sym_encrypt($2, $4)), $3) "
+            "VALUES ($1, $2, $3) "
             "ON CONFLICT (key) DO UPDATE SET "
-            "value = armor(pgp_sym_encrypt($2, $4)), agent = $3, updated_at = NOW()",
-            key, value, agent_name, DB_ENCRYPTION_KEY,
+            "value = $2, agent = $3, updated_at = NOW()",
+            key, value, agent_name,
         )
         return {"ok": True, "key": key}
 
@@ -1130,10 +1180,8 @@ async def execute_tool(tool: str, args: dict, agent_name: str = "main") -> dict:
     # Routine management tools — handled in-process
     if tool == "list_routines":
         rows = await db_pool.fetch(
-            "SELECT id, pgp_sym_decrypt(dearmor(name), $1) AS name, schedule, "
-            "pgp_sym_decrypt(dearmor(prompt), $1) AS prompt, enabled, last_run_at "
-            "FROM routines ORDER BY created_at DESC",
-            DB_ENCRYPTION_KEY,
+            "SELECT id, name, schedule, prompt, enabled, last_run_at "
+            "FROM routines ORDER BY created_at DESC"
         )
         return {
             "routines": [
@@ -1163,8 +1211,8 @@ async def execute_tool(tool: str, args: dict, agent_name: str = "main") -> dict:
             raise ValueError(f"Invalid cron expression: '{schedule}'")
         routine_id = await db_pool.fetchval(
             "INSERT INTO routines (name, schedule, prompt, enabled) "
-            "VALUES (armor(pgp_sym_encrypt($1, $5)), $2, armor(pgp_sym_encrypt($3, $5)), $4) RETURNING id",
-            name, schedule, prompt, enabled, DB_ENCRYPTION_KEY,
+            "VALUES ($1, $2, $3, $4) RETURNING id",
+            name, schedule, prompt, enabled,
         )
         if enabled:
             _schedule_routine(routine_id, schedule)
@@ -1172,11 +1220,11 @@ async def execute_tool(tool: str, args: dict, agent_name: str = "main") -> dict:
 
     if tool == "update_routine":
         rid = uuid.UUID(args["id"])
-        sets, params = [], [rid, DB_ENCRYPTION_KEY]
-        i = 3
+        sets, params = [], [rid]
+        i = 2
         for field in ("name", "prompt"):
             if field in args:
-                sets.append(f"{field} = armor(pgp_sym_encrypt(${i}, $2))")
+                sets.append(f"{field} = ${i}")
                 params.append(str(args[field])); i += 1
         if "schedule" in args:
             try:
@@ -1327,6 +1375,70 @@ class AgentRequest(BaseModel):
     prompt: str
     conversation_id: Optional[str] = None
     always_allow: bool = False
+    # When set, this is an app-scoped sidebar chat. Binds the conversation to
+    # the app, locks tools to app-relevant ones, and seeds the system prompt
+    # from the app's manifest.
+    app: Optional[str] = None
+
+
+# Tool subset used for app-scoped sidebar chats. Kept deliberately tight: the
+# LLM should talk *to* the app via app_call, not edit its source from here.
+_APP_CHAT_TOOLS = {"app_call", "web_search"}
+
+
+def _app_system_prompt(app_name: str) -> str:
+    status = apps_loader.STATUS.get(app_name, {})
+    manifest = status.get("manifest", {}) or {}
+    mod = status.get("module")
+
+    lines = [
+        f'You are the in-app assistant for the "{app_name}" app. '
+        "Help the user use this app — read its state and perform actions — "
+        "via the `app_call` tool. Do not attempt to edit source code.",
+    ]
+    desc = manifest.get("description")
+    if desc:
+        lines.append(f"\nApp description: {desc}")
+
+    tables = manifest.get("tables") or {}
+    if tables:
+        lines.append("\nTables:")
+        for name, note in tables.items():
+            lines.append(f"- {name}: {note}")
+
+    capabilities = manifest.get("capabilities") or []
+    if capabilities:
+        lines.append("\nCapabilities:")
+        for cap in capabilities:
+            if isinstance(cap, dict):
+                lines.append(f"- {cap.get('name', cap)}")
+            else:
+                lines.append(f"- {cap}")
+
+    # Pull concrete route list from the mounted router so the LLM doesn't
+    # have to guess paths. These are the ONLY valid `path` values for app_call.
+    if mod and hasattr(mod, "router"):
+        routes: list[str] = []
+        for route in getattr(mod.router, "routes", []):
+            methods = getattr(route, "methods", set()) or set()
+            path = getattr(route, "path", "")
+            if not path.startswith("/api/"):
+                continue
+            for m in sorted(m for m in methods if m != "HEAD"):
+                routes.append(f"{m} {path}")
+        if routes:
+            lines.append("\nAvailable endpoints (pass these as app_call's path):")
+            for r in routes:
+                lines.append(f"- {r}")
+
+    lines.append(
+        "\nRules:\n"
+        "- Use app_call for every data read/write. Paths start with /api/.\n"
+        "- Do NOT guess endpoint paths — only use the ones listed above.\n"
+        "- When a user asks for a state change (add/remove), do it, then confirm.\n"
+        "- Keep answers short. The sidebar is narrow."
+    )
+    return "\n".join(lines)
 
 
 @app.post("/agent")
@@ -1340,39 +1452,72 @@ async def agent_endpoint(req: AgentRequest):
       {"e":"error",     "d":"message"}
       {"e":"done",      "d":{"conv_id":"…"}}
     """
-    is_new = req.conversation_id is None
+    # App-scoped sidebar chat: reuse the same conversation per app so the user
+    # sees the full history every time they open the app.
+    bound_app = req.app.strip() if req.app else None
+    if bound_app and bound_app not in apps_loader.STATUS:
+        raise HTTPException(404, f"Unknown app: {bound_app}")
 
-    if is_new:
+    is_new = False
+    if req.conversation_id:
+        conv_id = uuid.UUID(req.conversation_id)
+        row = await db_pool.fetchrow(
+            "SELECT id, app FROM conversations WHERE id = $1", conv_id
+        )
+        if not row:
+            raise HTTPException(404, "Conversation not found")
+        if bound_app and row["app"] and row["app"] != bound_app:
+            raise HTTPException(400, "Conversation is bound to a different app")
+    elif bound_app:
+        # Find-or-create the per-app conversation.
+        existing = await db_pool.fetchval(
+            "SELECT id FROM conversations WHERE app = $1 "
+            "ORDER BY created_at DESC LIMIT 1",
+            bound_app,
+        )
+        if existing:
+            conv_id = existing
+        else:
+            conv_id = uuid.uuid4()
+            is_new = True
+            await db_pool.execute(
+                "INSERT INTO conversations (id, title, app) "
+                "VALUES ($1, $2, $3)",
+                conv_id, f"{bound_app}", bound_app,
+            )
+    else:
         conv_id = uuid.uuid4()
+        is_new = True
         await db_pool.execute(
-            "INSERT INTO conversations (id, title) VALUES ($1, armor(pgp_sym_encrypt($2, $3)))",
+            "INSERT INTO conversations (id, title) VALUES ($1, $2)",
             conv_id,
             "New conversation",
-            DB_ENCRYPTION_KEY,
         )
-    else:
-        conv_id = uuid.UUID(req.conversation_id)
-        exists = await db_pool.fetchval(
-            "SELECT id FROM conversations WHERE id = $1", conv_id
-        )
-        if not exists:
-            raise HTTPException(404, "Conversation not found")
 
     await save_message(conv_id, "user", req.prompt)
 
     history, memory_snippet = await build_context(conv_id)
-    system_content = TOOL_SYSTEM_PROMPT
+    if bound_app:
+        system_content = _app_system_prompt(bound_app)
+        active_tools = [
+            t for t in GEMMA_TOOLS if t["function"]["name"] in _APP_CHAT_TOOLS
+        ]
+    else:
+        system_content = TOOL_SYSTEM_PROMPT
+        active_tools = await select_tools_for_conversation(conv_id, allow_delegate=True)
     if memory_snippet:
         system_content += f"\n\nRelevant earlier context:\n{memory_snippet}"
-    active_tools = select_tools_for(req.prompt, allow_delegate=True)
     print(
-        f"[tools] conv={conv_id} "
+        f"[tools] conv={conv_id} app={bound_app or '-'} "
         f"selected {len(active_tools)}/{len(GEMMA_TOOLS)}: "
         f"{[t['function']['name'] for t in active_tools]}"
     )
+    # Skip the generic few-shot examples for app chats — they're about
+    # filesystem/tool navigation and would confuse the app-scoped system prompt.
+    prelude = [] if bound_app else TOOL_EXAMPLE_MESSAGES
     messages = [
         {"role": "system", "content": system_content},
-    ] + TOOL_EXAMPLE_MESSAGES + history
+    ] + prelude + history
 
     async def event_stream():
         loop_messages = list(messages)  # local copy — avoids nonlocal scoping issues
@@ -1566,7 +1711,7 @@ async def agent_endpoint(req: AgentRequest):
             tool_result_meta: dict
             try:
                 result = await execute_tool(
-                    tool_name, tool_call.get("args", {})
+                    tool_name, tool_call.get("args", {}), bound_app=bound_app
                 )
                 consecutive_errors = 0
                 yield (
@@ -1728,8 +1873,8 @@ async def search_chat(req: SearchChatRequest):
     is_new = req.session_id is None
     if is_new:
         session_id = await db_pool.fetchval(
-            "INSERT INTO search_sessions (title) VALUES (armor(pgp_sym_encrypt($1, $2))) RETURNING id",
-            req.query[:80], DB_ENCRYPTION_KEY,
+            "INSERT INTO search_sessions (title) VALUES ($1) RETURNING id",
+            req.query[:80],
         )
     else:
         session_id = uuid.UUID(req.session_id)
@@ -1741,15 +1886,15 @@ async def search_chat(req: SearchChatRequest):
 
     await db_pool.execute(
         "INSERT INTO search_messages (session_id, role, content) "
-        "VALUES ($1, $2, armor(pgp_sym_encrypt($3, $4)))",
-        session_id, "user", req.query, DB_ENCRYPTION_KEY,
+        "VALUES ($1, $2, $3)",
+        session_id, "user", req.query,
     )
 
     # --- Load session history for context ------------------------------------
     history_rows = await db_pool.fetch(
-        "SELECT role, pgp_sym_decrypt(dearmor(content), $2) AS content, sources "
+        "SELECT role, content, sources "
         "FROM search_messages WHERE session_id = $1 ORDER BY created_at",
-        session_id, DB_ENCRYPTION_KEY,
+        session_id,
     )
     # Build prior turns as context messages (exclude the message we just inserted)
     prior_turns = list(history_rows)[:-1]
@@ -1849,8 +1994,8 @@ async def search_chat(req: SearchChatRequest):
 
                 await db_pool.execute(
                     "INSERT INTO search_messages (session_id, role, content, sources) "
-                    "VALUES ($1, $2, armor(pgp_sym_encrypt($3, $5)), $4)",
-                    session_id, "assistant", answer, all_sources, DB_ENCRYPTION_KEY,
+                    "VALUES ($1, $2, $3, $4)",
+                    session_id, "assistant", answer, all_sources,
                 )
                 break
 
@@ -1911,8 +2056,8 @@ async def search_chat(req: SearchChatRequest):
             yield json.dumps({"e": "text", "d": final}) + "\n"
             await db_pool.execute(
                 "INSERT INTO search_messages (session_id, role, content, sources) "
-                "VALUES ($1, $2, armor(pgp_sym_encrypt($3, $5)), $4)",
-                session_id, "assistant", final, all_sources, DB_ENCRYPTION_KEY,
+                "VALUES ($1, $2, $3, $4)",
+                session_id, "assistant", final, all_sources,
             )
 
         yield json.dumps({"e": "done", "d": {"session_id": str(session_id)}}) + "\n"
@@ -1925,9 +2070,8 @@ async def search_chat(req: SearchChatRequest):
 @app.get("/search-sessions")
 async def list_search_sessions():
     rows = await db_pool.fetch(
-        "SELECT id, pgp_sym_decrypt(dearmor(title), $1) AS title, created_at "
-        "FROM search_sessions ORDER BY created_at DESC LIMIT 50",
-        DB_ENCRYPTION_KEY,
+        "SELECT id, title, created_at "
+        "FROM search_sessions ORDER BY created_at DESC LIMIT 50"
     )
     return [{"id": str(r["id"]), "title": r["title"], "created_at": r["created_at"].isoformat()} for r in rows]
 
@@ -1935,9 +2079,9 @@ async def list_search_sessions():
 @app.get("/search-sessions/{session_id}/messages")
 async def get_search_messages(session_id: str):
     rows = await db_pool.fetch(
-        "SELECT role, pgp_sym_decrypt(dearmor(content), $2) AS content, sources "
+        "SELECT role, content, sources "
         "FROM search_messages WHERE session_id = $1 ORDER BY created_at",
-        uuid.UUID(session_id), DB_ENCRYPTION_KEY,
+        uuid.UUID(session_id),
     )
     return [{"role": r["role"], "content": r["content"], "sources": r["sources"] or []} for r in rows]
 
@@ -1951,14 +2095,14 @@ async def delete_search_session(session_id: str):
 @app.get("/conversations")
 async def list_conversations():
     rows = await db_pool.fetch(
-        "SELECT id, pgp_sym_decrypt(dearmor(title), $1) AS title, created_at "
-        "FROM conversations ORDER BY created_at DESC LIMIT 50",
-        DB_ENCRYPTION_KEY,
+        "SELECT id, title, app, created_at "
+        "FROM conversations ORDER BY created_at DESC LIMIT 50"
     )
     return [
         {
             "id": str(r["id"]),
             "title": r["title"],
+            "app": r["app"],
             "created_at": r["created_at"].isoformat(),
         }
         for r in rows
@@ -1968,10 +2112,9 @@ async def list_conversations():
 @app.get("/conversations/{conversation_id}/messages")
 async def get_messages(conversation_id: str):
     rows = await db_pool.fetch(
-        "SELECT role, COALESCE(kind, role) AS kind, "
-        "pgp_sym_decrypt(dearmor(content), $2) AS content, metadata "
+        "SELECT role, COALESCE(kind, role) AS kind, content, metadata "
         "FROM messages WHERE conversation_id = $1 ORDER BY created_at",
-        uuid.UUID(conversation_id), DB_ENCRYPTION_KEY,
+        uuid.UUID(conversation_id),
     )
     return [
         {
@@ -2058,10 +2201,8 @@ class RoutinePatch(BaseModel):
 @app.get("/api/routines")
 async def list_routines():
     rows = await db_pool.fetch(
-        "SELECT id, pgp_sym_decrypt(dearmor(name), $1) AS name, schedule, "
-        "pgp_sym_decrypt(dearmor(prompt), $1) AS prompt, "
-        "enabled, last_run_at, created_at FROM routines ORDER BY created_at DESC",
-        DB_ENCRYPTION_KEY,
+        "SELECT id, name, schedule, prompt, "
+        "enabled, last_run_at, created_at FROM routines ORDER BY created_at DESC"
     )
     return [
         {
@@ -2087,8 +2228,8 @@ async def create_routine(req: RoutineRequest):
 
     routine_id = await db_pool.fetchval(
         "INSERT INTO routines (name, schedule, prompt, enabled) "
-        "VALUES (armor(pgp_sym_encrypt($1, $5)), $2, armor(pgp_sym_encrypt($3, $5)), $4) RETURNING id",
-        req.name, req.schedule, req.prompt, req.enabled, DB_ENCRYPTION_KEY,
+        "VALUES ($1, $2, $3, $4) RETURNING id",
+        req.name, req.schedule, req.prompt, req.enabled,
     )
     if req.enabled:
         _schedule_routine(routine_id, req.schedule)
@@ -2098,10 +2239,10 @@ async def create_routine(req: RoutineRequest):
 @app.patch("/api/routines/{routine_id}")
 async def update_routine(routine_id: str, req: RoutinePatch):
     rid = uuid.UUID(routine_id)
-    sets, params = [], [rid, DB_ENCRYPTION_KEY]
-    i = 3
+    sets, params = [], [rid]
+    i = 2
     if req.name is not None:
-        sets.append(f"name = armor(pgp_sym_encrypt(${i}, $2))")
+        sets.append(f"name = ${i}")
         params.append(req.name); i += 1
     if req.schedule is not None:
         try:
@@ -2111,7 +2252,7 @@ async def update_routine(routine_id: str, req: RoutinePatch):
         sets.append(f"schedule = ${i}")
         params.append(req.schedule); i += 1
     if req.prompt is not None:
-        sets.append(f"prompt = armor(pgp_sym_encrypt(${i}, $2))")
+        sets.append(f"prompt = ${i}")
         params.append(req.prompt); i += 1
     if req.enabled is not None:
         sets.append(f"enabled = ${i}")
@@ -2145,11 +2286,9 @@ async def delete_routine(routine_id: str):
 @app.get("/api/routines/{routine_id}/runs")
 async def get_routine_runs(routine_id: str):
     rows = await db_pool.fetch(
-        "SELECT id, conversation_id, started_at, finished_at, status, "
-        "CASE WHEN output IS NULL THEN NULL ELSE pgp_sym_decrypt(dearmor(output), $2) END AS output, "
-        "CASE WHEN error IS NULL THEN NULL ELSE pgp_sym_decrypt(dearmor(error), $2) END AS error "
+        "SELECT id, conversation_id, started_at, finished_at, status, output, error "
         "FROM routine_runs WHERE routine_id = $1 ORDER BY started_at DESC LIMIT 20",
-        uuid.UUID(routine_id), DB_ENCRYPTION_KEY,
+        uuid.UUID(routine_id),
     )
     return [
         {
@@ -2192,8 +2331,8 @@ async def generate_title(conv_id: uuid.UUID, user_msg: str, assistant_msg: str):
             title = res.json().get("response", "").strip().strip('"').strip("'")[:80]
             if title:
                 await db_pool.execute(
-                    "UPDATE conversations SET title = armor(pgp_sym_encrypt($1, $3)) WHERE id = $2",
-                    title, conv_id, DB_ENCRYPTION_KEY,
+                    "UPDATE conversations SET title = $1 WHERE id = $2",
+                    title, conv_id,
                 )
     except Exception as e:
         print(f"[title] Failed to generate title: {e}")

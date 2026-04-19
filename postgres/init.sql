@@ -2,7 +2,6 @@
 -- Local AI Platform — Database Schema
 -- =============================================================================
 
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE EXTENSION IF NOT EXISTS "vector";
 
 CREATE TABLE IF NOT EXISTS conversations (

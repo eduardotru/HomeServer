@@ -143,7 +143,6 @@ and `query_app(name, sql)` tool.
 - `DATABASE_URL` — shared pool already connected when `setup()` runs
 - `FILES_URL` — use for file storage, put your files under `apps/<name>/...`
 - `LLM_SERVER_URL` — call the local LLM if you need AI inside the app itself
-- `DB_ENCRYPTION_KEY` — use `armor(pgp_sym_encrypt(x, $KEY))` for sensitive columns
 
 ## When the LLM modifies your app
 

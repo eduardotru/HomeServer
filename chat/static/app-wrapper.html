@@ -46,24 +46,24 @@
                 <aside class="app-sidebar" id="app-sidebar">
                     <div class="sidebar-header">
                         <span>AI · <span id="sidebar-app-name"></span></span>
+                        <span id="sidebar-status" class="sidebar-status"></span>
                     </div>
-                    <div class="sidebar-body">
-                        <p class="sidebar-note">
-                            Chat sidebar placeholder. In the next iteration this
-                            will embed the chat UI scoped to this app's context.
-                            Events from the app frame will land here via
-                            <code>postMessage</code>.
-                        </p>
-                        <pre id="sidebar-events"></pre>
-                    </div>
+                    <div class="sidebar-transcript" id="sidebar-transcript"></div>
+                    <form class="sidebar-input-row" id="sidebar-form">
+                        <textarea
+                            id="sidebar-input"
+                            placeholder="Ask about this app…"
+                            rows="1"
+                        ></textarea>
+                        <button type="submit" id="sidebar-send" title="Send">↵</button>
+                    </form>
                 </aside>
             </div>
         </div>
 
         <script type="module">
             const parts = window.location.pathname.split("/").filter(Boolean);
-            // /apps/<name> → name
-            const appName = parts[1];
+            const appName = parts[1]; // /apps/<name>
 
             document.getElementById("app-title").textContent = appName;
             document.getElementById("sidebar-app-name").textContent = appName;
@@ -71,16 +71,237 @@
             const frame = document.getElementById("app-frame");
             frame.src = `/apps/${appName}/app/`;
 
-            const eventsEl = document.getElementById("sidebar-events");
-            const eventLog = [];
-            window.addEventListener("message", (e) => {
-                if (!e.data || !e.data.hsEvent) return;
-                eventLog.unshift(
-                    `${new Date().toLocaleTimeString()} · ${e.data.hsEvent} · ${JSON.stringify(e.data.detail ?? {})}`
+            const transcript = document.getElementById("sidebar-transcript");
+            const input = document.getElementById("sidebar-input");
+            const form = document.getElementById("sidebar-form");
+            const sendBtn = document.getElementById("sidebar-send");
+            const statusEl = document.getElementById("sidebar-status");
+
+            let convId = null;
+            let generating = false;
+
+            // ── Transcript rendering ────────────────────────────
+            function el(tag, cls, text) {
+                const n = document.createElement(tag);
+                if (cls) n.className = cls;
+                if (text != null) n.textContent = text;
+                return n;
+            }
+
+            function addBubble(role, text = "") {
+                const msg = el("div", `sb-msg sb-${role}`);
+                msg.appendChild(el("div", "sb-bubble", text));
+                transcript.appendChild(msg);
+                transcript.scrollTop = transcript.scrollHeight;
+                return msg.querySelector(".sb-bubble");
+            }
+
+            function addToolCard(d) {
+                const card = el("div", "sb-tool");
+                const head = el("div", "sb-tool-head");
+                head.appendChild(el("span", "sb-tool-icon", "⚙"));
+                const label =
+                    d.tool === "app_call"
+                        ? `${d.args?.method || ""} ${d.args?.path || ""}`
+                        : d.tool;
+                head.appendChild(el("span", "sb-tool-name", label));
+                card.appendChild(head);
+                transcript.appendChild(card);
+                transcript.scrollTop = transcript.scrollHeight;
+                return card;
+            }
+
+            function fillToolResult(card, res) {
+                const r = el(
+                    "div",
+                    "sb-tool-res " + (res.ok ? "ok" : "err"),
                 );
-                eventsEl.textContent = eventLog.slice(0, 20).join("\n");
+                const text = res.ok
+                    ? JSON.stringify(res.result, null, 2).slice(0, 400)
+                    : res.error;
+                r.textContent = text;
+                card.appendChild(r);
+                transcript.scrollTop = transcript.scrollHeight;
+            }
+
+            function addEventChip(name, detail) {
+                const chip = el("div", "sb-event");
+                chip.appendChild(el("span", "sb-event-dot", "•"));
+                chip.appendChild(el("span", "sb-event-name", name));
+                const time = new Date().toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                });
+                chip.appendChild(el("span", "sb-event-time", time));
+                const detailStr = detail && Object.keys(detail).length
+                    ? JSON.stringify(detail)
+                    : "";
+                if (detailStr) {
+                    chip.appendChild(el("span", "sb-event-detail", detailStr));
+                }
+                transcript.appendChild(chip);
+                transcript.scrollTop = transcript.scrollHeight;
+            }
+
+            // ── Load existing conversation ──────────────────────
+            async function loadHistory() {
+                try {
+                    const res = await fetch("/conversations");
+                    if (!res.ok) return;
+                    const list = await res.json();
+                    const conv = list.find((c) => c.app === appName);
+                    if (!conv) return;
+                    convId = conv.id;
+                    const r2 = await fetch(`/conversations/${conv.id}/messages`);
+                    if (!r2.ok) return;
+                    const msgs = await r2.json();
+                    replayMessages(msgs);
+                } catch (e) {
+                    console.error("sidebar load", e);
+                }
+            }
+
+            function replayMessages(msgs) {
+                let pendingCard = null;
+                for (const m of msgs) {
+                    const kind = m.kind || m.role;
+                    const meta = m.metadata || {};
+                    if (kind === "user") {
+                        pendingCard = null;
+                        if ((m.content || "").trim())
+                            addBubble("user", m.content);
+                    } else if (kind === "assistant") {
+                        pendingCard = null;
+                        if ((m.content || "").trim())
+                            addBubble("ai", stripThink(m.content));
+                    } else if (kind === "tool_call") {
+                        pendingCard = addToolCard({
+                            tool: meta.tool || "tool",
+                            args: meta.args || {},
+                        });
+                    } else if (kind === "tool_result") {
+                        if (pendingCard) fillToolResult(pendingCard, meta);
+                        pendingCard = null;
+                    }
+                }
+            }
+
+            function stripThink(s) {
+                return (s || "")
+                    .replace(/<think>[\s\S]*?<\/think>\s*/g, "")
+                    .trim();
+            }
+
+            // ── Send message ────────────────────────────────────
+            async function send() {
+                const text = input.value.trim();
+                if (!text || generating) return;
+                input.value = "";
+                input.style.height = "auto";
+                addBubble("user", text);
+
+                generating = true;
+                sendBtn.disabled = true;
+                statusEl.textContent = "thinking…";
+
+                const aiBubble = addBubble("ai", "");
+                let pendingCard = null;
+                let gotAnyText = false;
+
+                try {
+                    const res = await fetch("/agent", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            prompt: text,
+                            app: appName,
+                            conversation_id: convId,
+                            always_allow: true,
+                        }),
+                    });
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+                    const reader = res.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buf = "";
+                    loop: while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        buf += decoder.decode(value, { stream: true });
+                        let nl;
+                        while ((nl = buf.indexOf("\n")) !== -1) {
+                            const line = buf.slice(0, nl).trim();
+                            buf = buf.slice(nl + 1);
+                            if (!line) continue;
+                            let ev;
+                            try {
+                                ev = JSON.parse(line);
+                            } catch {
+                                continue;
+                            }
+                            switch (ev.e) {
+                                case "text":
+                                    aiBubble.textContent = stripThink(ev.d);
+                                    gotAnyText = true;
+                                    transcript.scrollTop = transcript.scrollHeight;
+                                    break;
+                                case "tool_start":
+                                    pendingCard = addToolCard(ev.d);
+                                    break;
+                                case "tool_done":
+                                    if (pendingCard)
+                                        fillToolResult(pendingCard, ev.d);
+                                    pendingCard = null;
+                                    break;
+                                case "error":
+                                    aiBubble.textContent = `Error: ${ev.d}`;
+                                    aiBubble.classList.add("err");
+                                    break loop;
+                                case "done":
+                                    if (ev.d.conv_id) convId = ev.d.conv_id;
+                                    break loop;
+                            }
+                        }
+                    }
+                    if (!gotAnyText && !aiBubble.textContent) {
+                        aiBubble.closest(".sb-msg")?.remove();
+                    }
+                } catch (err) {
+                    aiBubble.textContent = `Error: ${err.message}`;
+                    aiBubble.classList.add("err");
+                }
+
+                generating = false;
+                sendBtn.disabled = false;
+                statusEl.textContent = "";
+                input.focus();
+            }
+
+            form.addEventListener("submit", (e) => {
+                e.preventDefault();
+                send();
             });
 
+            input.addEventListener("keydown", (e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    send();
+                }
+            });
+
+            input.addEventListener("input", () => {
+                input.style.height = "auto";
+                input.style.height =
+                    Math.min(input.scrollHeight, 120) + "px";
+            });
+
+            // ── App-frame events as visible chips ───────────────
+            window.addEventListener("message", (e) => {
+                if (!e.data || !e.data.hsEvent) return;
+                addEventChip(e.data.hsEvent, e.data.detail);
+            });
+
+            // ── Sidebar toggle ──────────────────────────────────
             document
                 .getElementById("toggle-sidebar")
                 .addEventListener("click", () => {
@@ -88,6 +309,8 @@
                         .getElementById("app")
                         .classList.toggle("sidebar-hidden");
                 });
+
+            loadHistory();
         </script>
     </body>
 </html>

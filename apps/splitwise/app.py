@@ -33,6 +33,13 @@ class ExpenseIn(BaseModel):
     participant_ids: list[str]
 
 
+class SettlementIn(BaseModel):
+    from_friend: str
+    to_friend: str
+    amount_cents: int
+    note: str | None = None
+
+
 # --- Helpers -----------------------------------------------------------------
 
 
@@ -183,8 +190,9 @@ async def debts():
     """Net amounts owed between pairs.
 
     For each expense, split `amount_cents` equally among its participants.
-    Every non-payer participant owes that slice to the payer. Then net out
-    A→B against B→A so we only report the residual direction.
+    Every non-payer participant owes that slice to the payer. Settlements
+    reduce the corresponding directional debt. Then net A→B against B→A so
+    we only report the residual direction.
     """
     rows = await db_pool.fetch(
         f"""
@@ -217,6 +225,14 @@ async def debts():
             key = (pid, payer)
             gross[key] = gross.get(key, 0) + share
 
+    # Apply settlements: a payment from X to Y reduces what X owes Y.
+    settlement_rows = await db_pool.fetch(
+        f'SELECT from_friend, to_friend, amount_cents FROM "{SCHEMA}".settlements'
+    )
+    for s in settlement_rows:
+        key = (str(s["from_friend"]), str(s["to_friend"]))
+        gross[key] = gross.get(key, 0) - s["amount_cents"]
+
     # Net pairs.
     net = []
     handled: set[tuple[str, str]] = set()
@@ -242,3 +258,57 @@ async def debts():
 
     net.sort(key=lambda e: -e["amount_cents"])
     return net
+
+
+# --- Settlements -------------------------------------------------------------
+
+
+def _settlement(r) -> dict:
+    return {
+        "id": str(r["id"]),
+        "from_friend": str(r["from_friend"]),
+        "to_friend": str(r["to_friend"]),
+        "from_name": r["from_name"],
+        "to_name": r["to_name"],
+        "amount_cents": r["amount_cents"],
+        "note": r["note"],
+        "created_at": r["created_at"].isoformat(),
+    }
+
+
+_SETTLEMENT_SELECT = f"""
+    SELECT s.id, s.from_friend, s.to_friend, s.amount_cents, s.note, s.created_at,
+           ff.name AS from_name, tf.name AS to_name
+    FROM "{SCHEMA}".settlements s
+    LEFT JOIN "{SCHEMA}".friends ff ON ff.id = s.from_friend
+    LEFT JOIN "{SCHEMA}".friends tf ON tf.id = s.to_friend
+"""
+
+
+@router.get("/api/settlements")
+async def list_settlements():
+    rows = await db_pool.fetch(_SETTLEMENT_SELECT + " ORDER BY s.created_at DESC")
+    return [_settlement(r) for r in rows]
+
+
+@router.post("/api/settlements")
+async def add_settlement(body: SettlementIn):
+    if body.amount_cents <= 0:
+        raise HTTPException(400, "amount_cents must be positive")
+    if body.from_friend == body.to_friend:
+        raise HTTPException(400, "from_friend and to_friend must differ")
+    row = await db_pool.fetchrow(
+        f'INSERT INTO "{SCHEMA}".settlements (from_friend, to_friend, amount_cents, note) '
+        f"VALUES ($1, $2, $3, $4) RETURNING id",
+        body.from_friend, body.to_friend, body.amount_cents, body.note,
+    )
+    full = await db_pool.fetchrow(_SETTLEMENT_SELECT + " WHERE s.id = $1", row["id"])
+    return _settlement(full)
+
+
+@router.delete("/api/settlements/{settlement_id}")
+async def delete_settlement(settlement_id: str):
+    await db_pool.execute(
+        f'DELETE FROM "{SCHEMA}".settlements WHERE id = $1', settlement_id
+    )
+    return {"ok": True}

@@ -11,11 +11,12 @@ const payerSelect = document.getElementById("payer-select");
 const participantsBox = document.getElementById("participants");
 const summaryTable = document.getElementById("summary");
 const debtsBox = document.getElementById("debts");
+const settlementsList = document.getElementById("settlements");
 
 let friends = [];
 const friendNameById = new Map();
 
-const dollars = (cents) => `$${(cents / 100).toFixed(2)}`;
+const euros = (cents) => `€${(cents / 100).toFixed(2)}`;
 
 function friendRow(f) {
     const row = document.createElement("div");
@@ -48,7 +49,7 @@ function expenseRow(e) {
         .join(", ") || "—";
     const meta = document.createElement("small");
     meta.className = "muted";
-    meta.textContent = `${dollars(e.amount_cents)} · paid by ${e.payer ?? "?"} · for ${who}`;
+    meta.textContent = `${euros(e.amount_cents)} · paid by ${e.payer ?? "?"} · for ${who}`;
 
     left.append(desc, meta);
     const del = document.createElement("button");
@@ -100,24 +101,116 @@ function getSelectedParticipantIds() {
         .map((cb) => cb.value);
 }
 
+// Deterministic pastel from a name so Alice is always the same swatch.
+function avatarColor(name) {
+    let h = 0;
+    for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) | 0;
+    return `hsl(${Math.abs(h) % 360} 55% 62%)`;
+}
+
+function initials(name) {
+    const parts = name.trim().split(/\s+/);
+    const first = parts[0]?.[0] ?? "?";
+    const last = parts.length > 1 ? parts[parts.length - 1][0] : "";
+    return (first + last).toUpperCase();
+}
+
+function avatar(name) {
+    const el = document.createElement("span");
+    el.className = "avatar";
+    el.style.background = avatarColor(name);
+    el.textContent = initials(name);
+    el.title = name;
+    return el;
+}
+
+async function settleUp(edge) {
+    const full = (edge.amount_cents / 100).toFixed(2);
+    const raw = prompt(
+        `${edge.debtor} pays ${edge.creditor} — amount in €:`,
+        full
+    );
+    if (raw == null) return;
+    const amount_cents = Math.round(parseFloat(raw) * 100);
+    if (!Number.isFinite(amount_cents) || amount_cents <= 0) {
+        alert("Enter a positive amount.");
+        return;
+    }
+    await api.post(API("/settlements"), {
+        from_friend: edge.debtor_id,
+        to_friend: edge.creditor_id,
+        amount_cents,
+    });
+    notifyHost("settlements.changed", { amount_cents });
+    refreshAll();
+}
+
 function renderDebts(edges) {
     if (!edges.length) {
         debtsBox.replaceChildren(
-            Object.assign(document.createElement("small"), {
-                className: "muted",
-                textContent: "No debts yet.",
+            Object.assign(document.createElement("div"), {
+                className: "debts-empty",
+                innerHTML: "✨ <span>All settled up.</span>",
             })
         );
         return;
     }
-    const ul = document.createElement("ul");
-    ul.className = "debts-list";
+    const wrap = document.createElement("div");
+    wrap.className = "debts-flow";
     for (const e of edges) {
-        const li = document.createElement("li");
-        li.innerHTML = `<strong>${e.debtor}</strong> owes <strong>${e.creditor}</strong> <span class="amt">${dollars(e.amount_cents)}</span>`;
-        ul.appendChild(li);
+        const row = document.createElement("div");
+        row.className = "debt";
+
+        const debtor = document.createElement("div");
+        debtor.className = "person";
+        debtor.append(avatar(e.debtor), Object.assign(document.createElement("span"), { className: "name", textContent: e.debtor }));
+
+        const arrow = document.createElement("div");
+        arrow.className = "arrow";
+        arrow.innerHTML = `
+            <span class="line"></span>
+            <span class="amt-pill">${euros(e.amount_cents)}</span>
+            <span class="line"></span>
+            <span class="tip">›</span>
+        `;
+
+        const creditor = document.createElement("div");
+        creditor.className = "person";
+        creditor.append(avatar(e.creditor), Object.assign(document.createElement("span"), { className: "name", textContent: e.creditor }));
+
+        const settle = document.createElement("button");
+        settle.className = "settle-btn";
+        settle.textContent = "Settle up";
+        settle.addEventListener("click", () => settleUp(e));
+
+        row.append(debtor, arrow, creditor, settle);
+        wrap.appendChild(row);
     }
-    debtsBox.replaceChildren(ul);
+    debtsBox.replaceChildren(wrap);
+}
+
+function settlementRow(s) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const left = document.createElement("div");
+    left.className = "expense-main";
+    const title = document.createElement("span");
+    title.textContent = `${s.from_name ?? "?"} → ${s.to_name ?? "?"}`;
+    const meta = document.createElement("small");
+    meta.className = "muted";
+    meta.textContent = `${euros(s.amount_cents)}${s.note ? " · " + s.note : ""}`;
+    left.append(title, meta);
+    const del = document.createElement("button");
+    del.className = "icon";
+    del.textContent = "×";
+    del.title = "Remove settlement";
+    del.addEventListener("click", async () => {
+        await api.del(API(`/settlements/${s.id}`));
+        notifyHost("settlements.changed");
+        refreshAll();
+    });
+    row.append(left, del);
+    return row;
 }
 
 async function refreshFriends() {
@@ -150,7 +243,7 @@ async function refreshSummary() {
             {
                 key: "total_paid",
                 label: "Total paid",
-                render: (r) => dollars(r.total_paid),
+                render: (r) => euros(r.total_paid),
             },
         ],
         rows
@@ -162,9 +255,19 @@ async function refreshDebts() {
     renderDebts(edges);
 }
 
+async function refreshSettlements() {
+    const rows = await api.get(API("/settlements"));
+    settlementsList.render(rows, settlementRow);
+}
+
 async function refreshAll() {
     await refreshFriends();
-    await Promise.all([refreshExpenses(), refreshSummary(), refreshDebts()]);
+    await Promise.all([
+        refreshExpenses(),
+        refreshSummary(),
+        refreshDebts(),
+        refreshSettlements(),
+    ]);
 }
 
 friendForm.addEventListener("hs-submit", async (e) => {
@@ -177,10 +280,11 @@ friendForm.addEventListener("hs-submit", async (e) => {
 });
 
 expenseForm.addEventListener("hs-submit", async (e) => {
-    const { description, amount_cents, payer_id } = e.detail;
+    const { description, amount, payer_id } = e.detail;
     if (!description?.trim() || !payer_id) return;
-    const amount = parseInt(amount_cents, 10);
-    if (!Number.isFinite(amount) || amount <= 0) return;
+    // Round to the nearest cent — parseFloat("12.1") * 100 = 1209.9999... otherwise.
+    const amount_cents = Math.round(parseFloat(amount) * 100);
+    if (!Number.isFinite(amount_cents) || amount_cents <= 0) return;
     const participant_ids = getSelectedParticipantIds();
     if (!participant_ids.length) {
         alert("Pick at least one person to split among.");
@@ -188,13 +292,13 @@ expenseForm.addEventListener("hs-submit", async (e) => {
     }
     await api.post(API("/expenses"), {
         description,
-        amount_cents: amount,
+        amount_cents,
         payer_id,
         participant_ids,
     });
     expenseForm.reset();
     renderParticipantPicker();
-    notifyHost("expenses.changed", { description, amount_cents: amount });
+    notifyHost("expenses.changed", { description, amount_cents });
     refreshAll();
 });
 
